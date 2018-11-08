@@ -1,0 +1,642 @@
+#!/bin/bash
+# vim:et:ft=sh:
+# @author Ling ZHOU(周龄) <zhou.0@foxmail.com>
+# @brief an automation tool based on ssh, sshpass, and gnu parallel.
+# @copyright Ling ZHOU(周龄) <zhou.0@foxmail.com>
+# @date 20181102-20181108
+# @version 1.0.0
+
+shopt -s extglob # for trim
+
+declare -A g_optval_dict
+declare -a g_arg_list
+declare -a g_host_list
+declare -a g_user_list
+declare -a g_pass_list
+declare -a g_port_list
+declare -a g_cmnt_list
+
+init_vars() {
+    export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
+    export TOOLS_HOME=$(dirname $(readlink -f "$0"))
+    export PARALLEL_BIN="$TOOLS_HOME/parallel --will-cite"
+    export SSHPASS_BIN="$TOOLS_HOME/sshpass"
+    export SSH_OPTS='-o stricthostkeychecking=no -o userknownhostsfile=/dev/null -q'
+    export REMOTE_CMD_FILE='/tmp/.sshaid.cmd.file'
+
+    COLUMN_LEN=$(stty size 2>/dev/null | awk '{print $2}')
+    [[ $COLUMN_LEN ]] || COLUMN_LEN=80
+    export COLUMN_LEN
+
+    g_jobs=$(nproc 2>/dev/null)
+    [[ $g_jobs ]] || g_jobs=8
+
+    g_default_user='root'
+    g_default_pass='x'
+    g_default_port='22'
+
+    g_host_sep=':'
+    g_cmnt_sep='//'
+    g_req_sep=':@_@:'
+    g_http_proxy=''
+
+    g_empty_host_line_pattern=''
+    g_host_line_pattern=''
+    g_request_line_pattern=''
+
+    g_arg_num=0
+    g_host_num=0
+    g_timeout=60
+
+    g_ssh_cmd='' # command for ssh
+    g_ssh_cmd_file=''
+
+    g_ssh_bin='ssh'
+    g_scp_bin='scp'
+    g_rsync_bin='rsync'
+    g_copy_bin=''
+
+    g_src=''
+    g_dst=''
+
+    g_debug=0
+    g_quiet=0
+    g_reverse=0
+    g_out_in_order=''
+}
+
+timestamp() {
+    date +%s
+} && export -f timestamp
+
+trim() {
+    trimmed_str="${1##*([[:space:]])}"
+    trimmed_str="${trimed_str%%*([[:space:]])}"
+    ((g_debug)) && echo "{{$1}} trimmed to {{$trimmed_str}}"
+}
+
+echo_exit() {
+    echo "${@:2}"
+    exit $1
+} && export -f echo_exit
+
+help_global() {
+    cat <<\EOF
+usage: sshaid <action> [options] [cmd] [args]
+use 'sshaid {help | h} <action>' to print help on a specific action
+
+actions:
+    help (h)
+    ssh
+    scp
+    rsync (rs)
+
+common-options:
+    -H hosts-file
+        line-format: host:user:password:port, never be with -h, no defaults
+    -h host:user:password:port
+        never be with -H, no defaults
+    -u default-user
+        optional, defaults to 'root' if absence
+    -p default-password
+        optional, defaults to 'x' if absence
+    -P default-port
+        optional, defaults to '22' if absence
+    -d
+        prints debug info
+    -k
+        keeps sequence of output same as the order of input
+        normally the output of a job will be printed as soon as the job completes
+    -q
+        suppresses extra information for sshaid, such as sshaid prompt and debug info
+    --hsep single-line-host-separator
+        optional, defaults to ':' if absence
+    --csep single-line-comment-separator
+        optional, defaults to '//' if absence
+    --proxy http_proxy_ip:http_proxy_port
+        optional, no defaults
+
+notice:
+    1. options can not be combined, legal examples: '-d -k', '-t 2', illegal examples: '-dk', '-t2'.
+    2. '-H' and '-h' can not be used at the same time.
+    3. USER specified by -u can be overridden by USER in host:USER:password:port.
+    4. PASSWORD specified by -p can be overridden by PASSWORD in host:user:PASSWORD:port.
+    5. PORT specified by -P can be overridden by PORT in host:user:password:PORT.
+    6. host-separator is needed if the member in between is not specified,
+       for example: host::password
+            in this case, default user will be used, and it can be overridden by -u.
+    7. user defined host-separator must be specified if PASSWORD contains ':'.
+       for example: 1.2.3.4_@_root_@_my:/passwd_@_22 // real comment
+       # sshaid ... --hsep '_@_' ...
+    8. user defined single-line-comment-separator must be specified if PASSWORD contains '//'.
+       for example: 1.2.3.4:root:my//passwd:22 !@# real comment
+       # sshaid ... --csep '!@#' ...
+
+
+sshaid is an automation tool based on ssh, sshpass, and gnu parallel, it can be used to:
+    1. scp/rsync file/dir(s) from local to remote, or in reverse.
+    2. ssh into host(s)(and execute command(s)).
+
+report bug(s) to <zhou.0@foxmail.com>.
+EOF
+
+    exit
+}
+
+help_help() {
+    cat <<\EOF
+usage: sshaid {help | h} [action]
+EOF
+
+    exit
+}
+
+help_ssh() {
+    cat <<\EOF
+usage: sshaid ssh [--ssh-bin your-ssh-binary-path] [common-options] [-c cmdfile | cmd]
+use 'sshaid {help | h}' to print help about 'common options'
+
+notice that '-c cmdfile' and 'cmd' can not be used at the same time.
+if neither '-c cmdfile' nor 'cmd' is used, then just logins into host(s) specified by '-h/-H'.
+else logins into host(s) specified by '-h/-H', executes command(s) and exit.
+EOF
+
+exit
+}
+
+help_scp() {
+    cat <<\EOF
+usage: sshaid scp [--scp-bin your-scp-binary-path] [-r] [common-options] source(s) destination
+use 'sshaid {help | h}' to print help about 'common options
+
+without option '-r':
+    scp local source(s) to remote destination
+with option '-r':
+    scp remote source(s) to local destination
+EOF
+
+exit
+}
+
+help_rsync() {
+    cat <<\EOF
+usage: sshaid {rsync | rs} [--rsync-bin your-rsync-binary-path] [-r] [common-options] \
+          source(s) destination
+use 'sshaid {help | h}' to print help about 'common options'
+
+without option '-r':
+    rsync local source(s) to remote destination
+with option '-r':
+    rsync remote source(s) to local destination
+EOF
+
+    exit
+}
+
+help_dispatch() {
+    local action=${g_arg_list[1]}
+
+    case $action in
+        h | help)
+            help_help;;
+        ssh)
+            help_ssh;;
+        scp)
+            help_scp;;
+        rs | rsync)
+            help_rsync;;
+        *)
+            echo "action: {{$action}} is unknown!"
+            echo "********************************************************************************"
+            echo
+            help_global;;
+    esac
+}
+
+build_line_patterns() {
+    local hsep="$g_host_sep"
+    local csep="$g_cmnt_sep"
+    local rsep="$g_req_sep"
+
+    [[ "$hsep" == "" ]] && hsep=':'
+    [[ "$csep" == "" ]] && csep='//'
+    [[ "$rsep" == "" ]] && rsep=':@_@:'
+
+    g_empty_host_line_pattern="^([[:space:]]*)($csep([[:space:]]*)(.*))?\$"
+    g_host_line_pattern="^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)"
+    g_host_line_pattern+="$hsep(.*)$hsep(.*)$hsep([0-9]*)(([[:space:]]*)$csep([[:space:]]*)(.*))?\$"
+    export g_request_line_pattern="^([^ ]+) ([^ ]+) ([^ ]+) (.+)$rsep(.+)\$"
+
+    if ((g_debug)); then
+        echo "host_sep: {{$hsep}}"
+        echo "cmnt_sep: {{$csep}}"
+        echo "req_sep: {{$rsep}}"
+        echo "empty_host_line_pattern: {{$g_empty_host_line_pattern}}"
+        echo "host_line_pattern: {{$g_host_line_pattern}}"
+        echo "request_line_pattern: {{$g_request_line_pattern}}"
+    fi
+}
+
+parse_host_line() {
+    if [[ "$1" =~ $g_empty_host_line_pattern ]]; then
+        ((g_debug)) && echo "empty host line: {{$1}} is ignored"
+        return
+    fi
+
+    if [[ "$1" =~ $g_host_line_pattern ]]; then
+        local host=${BASH_REMATCH[1]}
+        local user=${BASH_REMATCH[2]}
+        local pass=${BASH_REMATCH[3]}
+        local port=${BASH_REMATCH[4]}
+        local cmnt=${BASH_REMATCH[8]}
+    else
+        echo_exit 0 "host line: {{$1}} is invalid"
+    fi
+
+    if ((g_debug)); then
+        echo "line: {{$1}}"
+        echo "    host: {{$host}}"
+        echo "    user: {{$user}}"
+        echo "    pass: {{$pass}}"
+        echo "    port: {{$port}}"
+        echo "    cmnt: {{$cmnt}}"
+    fi
+
+    if [[ -z "$user" ]]; then
+        user="$g_default_user"
+        ((g_debug)) && echo "default user: {{$user}} will be used"
+    fi
+
+    if [[ -z "$pass" ]]; then
+        pass="$g_default_pass"
+        ((g_debug)) && echo "default password: {{$pass}} will be used"
+    fi
+
+    if [[ -z "$port" ]]; then
+        port="$g_default_port"
+        ((g_debug)) && echo "default port: {{$port}} will be used"
+    fi
+
+    g_host_list[$g_host_num]=$host
+    g_user_list[$g_host_num]=$user
+    g_pass_list[$g_host_num]=$pass
+    g_port_list[$g_host_num]=$port
+    g_cmnt_list[$g_host_num]=$cmnt
+    ((++g_host_num))
+}
+
+parse_host_file() {
+    ((g_debug)) && echo -e "\nhost file: {{$1}}"
+
+    while read line; do
+        parse_host_line "$line"
+    done <"$1"
+}
+
+check_option() {
+    optval="${g_optval_dict["$1"]}"
+    [[ ! -z "$optval" ]]
+} && export -f check_option
+
+parse_args() {
+    if (($# < 2)); then
+        echo "args are too few!"
+        echo "********************************************************************************"
+        echo
+        help_global
+    fi
+
+    while (($# > 0)); do
+        local arg="$1"
+
+        case "$arg" in
+            -d | -k | -q | -r)
+                g_optval_dict[$arg]=1;;
+
+            -j | -c | -h | -H | -u | -p | -P | -t | \
+            -hsep | --hsep | -csep | --csep | -rsep | --rsep | -proxy | --proxy | \
+            -ssh-bin | --ssh-bin | -scp-bin | --scp-bin | -rsync-bin | --rsync-bin)
+                shift
+                g_optval_dict[$arg]="$1";;
+
+            *)
+                g_arg_list[$g_arg_num]="$arg"
+                ((++g_arg_num));;
+        esac
+
+        shift
+    done
+
+    ((g_arg_num == 0)) && echo_exit 0 "action needed"
+    g_action=${g_arg_list[0]}
+
+    check_option '-H' && check_option '-h' && \
+        echo_exit 0 "'-H' and '-h' can not be used at the same time"
+
+    check_option '-d' && g_debug=1
+    check_option '-k' && g_out_in_order='-k'
+    check_option '-q' && g_quiet=1 && g_debug=0
+    check_option '-j' && g_jobs="$optval"
+    check_option '-u' && g_default_user="$optval"
+    check_option '-p' && g_default_pass="$optval"
+    check_option '-P' && g_default_port="$optval"
+    check_option '-t' && g_timeout="$optval"
+    check_option '-hsep' || check_option '--hsep' && g_host_sep="$optval"
+    check_option '-csep' || check_option '--csep' && g_cmnt_sep="$optval"
+    check_option '-rsep' || check_option '--rsep' && g_req_sep="$optval"
+    check_option '-proxy' || check_option '--proxy' && g_http_proxy="$optval"
+    check_option '-ssh-bin' || check_option '--ssh-bin' && g_ssh_bin="$optval"
+    check_option '-scp-bin' || check_option '--scp-bin' && g_scp_bin="$optval"
+    check_option '-rsync-bin' || check_option '--rsync-bin' && g_rsync_bin="$optval"
+
+    build_line_patterns "$g_host_sep" "$g_cmnt_sep" "$g_req_sep"
+
+    check_option '-h' && parse_host_line "$optval"
+    check_option '-H' && parse_host_file "$optval"
+
+    export g_debug
+    export g_quiet
+
+    debug_args
+}
+
+debug_args() {
+    ((g_debug == 0)) && return
+
+    echo
+    echo "action: {{$g_action}}"
+    echo "jobs: {{$g_jobs}}"
+    echo "timeout: {{$g_timeout}}"
+    echo "quiet: {{$g_quiet}}"
+    echo "out_in_order: {{$g_out_in_order}}"
+    echo
+    echo "default_user: {{$g_default_user}}"
+    echo "default_pass: {{$g_default_pass}}"
+    echo "default_port: {{$g_default_port}}"
+    echo
+    echo "http_proxy: {{$g_http_proxy}}"
+    echo
+    echo "ssh_bin: {{$g_ssh_bin}}"
+    echo "scp_bin: {{$g_scp_bin}}"
+    echo "rsync_bin: {{$g_rsync_bin}}"
+    echo
+    echo "optval_dict:"
+    for k in "${!g_optval_dict[@]}"; do
+        echo "    {{$k}} => {{${g_optval_dict[$k]}}}"
+    done
+    echo
+    echo "arg_num: {{$g_arg_num}}"
+    echo "arg_list:"
+    for ((i = 0; i < g_arg_num; ++i)); do
+        echo "    arg[$i]: {{${g_arg_list[i]}}}"
+    done
+    echo
+    echo "host_num: {{$g_host_num}}"
+    echo "host_list:"
+    for ((i = 0; i < g_host_num; ++i)); do
+        echo "    host[$i]: {{${g_host_list[i]}}}"
+        echo "    user[$i]: {{${g_user_list[i]}}}"
+        echo "    pass[$i]: {{${g_pass_list[i]}}}"
+        echo "    port[$i]: {{${g_port_list[i]}}}"
+        echo "    cmnt[$i]: {{${g_cmnt_list[i]}}}"
+        echo
+    done
+}
+
+build_request() {
+    local action=$1
+    local host_index=$2
+    local host=${g_host_list[$host_index]}
+    local user=${g_user_list[$host_index]}
+    local port=${g_port_list[$host_index]}
+
+    if [[ $g_http_proxy ]]; then
+        local proxy_opts="-o 'ProxyCommand nc -X CONNECT -x $g_http_proxy %h %p'"
+    else
+        local proxy_opts=''
+    fi
+
+    if [[ $g_copy_bin ]]; then
+        local dst="$g_dst"
+
+        if ((g_reverse)); then # from remote to local
+            if ((g_host_num > 1)); then
+                dst+="/$host"
+                mkdir -p "$dst"
+            fi
+
+            if [[ $g_copy_bin == *scp* ]]; then
+                request=$(cat <<EOF
+$SSHPASS_BIN -e $g_scp_bin -pr $SSH_OPTS $proxy_opts -P$port $user@$host:$g_src $dst
+EOF
+)
+            else # rsync
+                request=$(cat <<EOF
+$g_rsync_bin -ae "$SSHPASS_BIN -e $g_ssh_bin $SSH_OPTS $proxy_opts -p$port" $user@$host:$g_src $dst
+EOF
+)
+            fi
+        else # from local to remote
+            if [[ $g_copy_bin == *scp* ]]; then
+                request=$(cat <<EOF
+$SSHPASS_BIN -e $g_scp_bin -pr $SSH_OPTS $proxy_opts -P$port $g_src $user@$host:$dst
+EOF
+)
+            else # rsync
+                request=$(cat <<EOF
+$g_rsync_bin -ae "$SSHPASS_BIN -e $g_ssh_bin $SSH_OPTS $proxy_opts -p$port" $g_src $user@$host:$dst
+EOF
+)
+            fi
+        fi
+    else
+        request=$(cat <<EOF
+$SSHPASS_BIN -e $g_ssh_bin $SSH_OPTS $proxy_opts -p$port -l$user $host '$g_ssh_cmd'
+EOF
+)
+    fi
+
+    [[ $action != 'login' ]] && \
+        echo "$host_index $host $user $request$g_req_sep${g_pass_list[$host_index]}"
+}
+
+build_requests() {
+    for ((i = 0; i < g_host_num; ++i)); do
+        build_request 'exec' $i
+    done
+}
+
+exec_request() {
+    if [[ "$1" =~ $g_request_line_pattern ]]; then
+        local host_index="${BASH_REMATCH[1]}"
+        local host="${BASH_REMATCH[2]}"
+        local user="${BASH_REMATCH[3]}"
+        local request="${BASH_REMATCH[4]}"
+        SSHPASS="${BASH_REMATCH[5]}"
+    else
+        echo_exit 0 "args: {{$1}} invalid"
+    fi
+
+    ((g_quiet == 0)) && echo_host_prompt $host_index $host $user
+
+    if ((g_debug)); then
+        echo "request_line_pattern: {{$g_request_line_pattern}}"
+        echo "request_line: {{$1}}"
+        echo "host_index: {{$host_index}}"
+        echo "host: {{$host}}"
+        echo "user: {{$user}}"
+        echo "request: {{$request}}"
+        echo "password: {{$SSHPASS}}"
+        echo
+    fi
+
+    export SSHPASS
+    eval "$request"
+    echo
+} && export -f exec_request
+
+exec_in_parallel() {
+    $PARALLEL_BIN $g_out_in_order --jobs $g_jobs --timeout $g_timeout \
+        exec_request :::: <(build_requests)
+
+   #for ((i = 0; i < g_host_num; ++i)); do
+   #    exec_request $i
+   #done
+}
+
+sshaid_ssh() {
+    g_ssh_cmd="${g_arg_list[1]}" # maybe empty
+    check_option '-c' && g_ssh_cmd_file="$optval"
+
+    if ((g_debug)); then
+        echo "ssh_cmd: {{$g_ssh_cmd}}"
+        echo "ssh_cmd_file: {{$g_ssh_cmd_file}}"
+        echo
+    fi
+
+    if (($g_arg_num > 1)) && check_option '-c'; then
+        echo_exit 0 "'-c' and 'cmd' can not be used at the same time!"
+    elif (($g_arg_num > 1)); then
+        exec_in_parallel
+    elif check_option '-c'; then
+        g_reverse=0
+        g_src="$g_ssh_cmd_file"
+        g_dst="${REMOTE_CMD_FILE}.$(timestamp)_$$_$RANDOM"
+        [[ $g_scp_bin ]] && g_copy_bin="$g_scp_bin"
+        [[ -z $g_copy_bin && $g_rsync_bin ]] && g_copy_bin=$g_rsync_bin
+        [[ -z $g_copy_bin ]] && g_copy_bin=scp
+        exec_in_parallel
+
+        g_copy_bin=
+        g_ssh_cmd="chmod +x $g_dst && $g_dst && rm -f $g_dst"
+        exec_in_parallel
+    else
+        sshaid_login
+    fi
+}
+
+sshaid_login() {
+    for ((i = 0; i < g_host_num; ++i)); do
+        build_request 'login' $i
+        ((g_quiet == 0)) && echo_host_prompt $i ${g_host_list[i]} ${g_user_list[i]}
+
+        if ((g_debug)); then
+            echo "host_index: {{$i}}"
+            echo "host: {{${g_host_list[i]}}}"
+            echo "user: {{${g_user_list[i]}}}"
+            echo "request: {{$request}}"
+            echo "password: {{${g_pass_list[i]}}}"
+            echo
+        fi
+
+        export SSHPASS="${g_pass_list[i]}"
+        eval "$request"
+        echo
+    done
+}
+
+echo_host_prompt() {
+    local host_index=$1
+    local host=$2
+    local user=$3
+
+    local str=$(printf "#%d: %s@%s\n" $[host_index + 1] $user $host)
+    local str_len=$[${#str} + 2]
+    local left_size=$[(COLUMN_LEN - str_len) / 2]
+    local right_size=$[COLUMN_LEN - str_len - left_size]
+
+    local prompt=''
+    local i # 避免污染同名变量!
+
+    for ((i = 0; i < left_size; ++i)); do
+        prompt+='*'
+    done
+    prompt+=" $str "
+    for ((i = 0; i < right_size; ++i)); do
+        prompt+='*'
+    done
+
+    echo "$prompt"
+} && export -f echo_host_prompt
+
+sshaid_remote_copy() {
+    ((g_arg_num < 3)) && echo_exit 0 "source and destination are both needed!"
+
+    check_option '-r' && g_reverse=1
+
+    g_dst="${g_arg_list[$[g_arg_num - 1]]}"
+
+    ((--g_arg_num)) # drops the last arg
+    ((g_reverse && g_arg_num != 2)) && echo_exit 0 "can copy only ONE source from remote to local!"
+
+    for ((i = 1; i < g_arg_num; ++i)); do
+        [[ $g_src ]] && g_src+=" ${g_arg_list[i]}" || g_src="${g_arg_list[i]}"
+    done
+
+    debug_remote_copy
+    exec_in_parallel
+}
+
+debug_remote_copy() {
+    ((g_debug == 0)) && return
+
+    echo "reverse: {{$g_reverse}}"
+    echo "copy_bin: {{$g_copy_bin}}"
+    echo "source(s): {{$g_src}}"
+    echo "destination: {{$g_dst}}"
+    echo
+}
+
+sshaid_scp() {
+    g_copy_bin="$g_scp_bin"
+    sshaid_remote_copy
+}
+
+sshaid_rsync() {
+    g_copy_bin="$g_rsync_bin"
+    sshaid_remote_copy
+}
+
+sshaid_run() {
+    chmod +x "$TOOLS_HOME"/{parallel,sshpass,sshaid}
+
+    case $g_action in
+        h | help)
+            help_dispatch;;
+        ssh)
+            sshaid_ssh;;
+        scp)
+            sshaid_scp;;
+        rs | rsync)
+            sshaid_rsync;;
+        *)
+            echo "action: {{$g_action}} is unknown!"
+            echo "********************************************************************************"
+            echo
+            help_global;;
+    esac
+}
+
+init_vars
+parse_args "$@"
+sshaid_run
