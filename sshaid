@@ -4,7 +4,7 @@
 # @brief an automation tool based on ssh, sshpass, and gnu parallel.
 # @copyright Ling ZHOU(周龄) <zhou.0@foxmail.com>
 # @date 20181102-20181108
-# @version 1.0.0
+# @version 1.0.1
 
 shopt -s extglob # for trim
 
@@ -18,18 +18,25 @@ declare -a g_cmnt_list
 
 init_vars() {
     export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
-    export TOOLS_HOME=$(dirname $(readlink -f "$0"))
-    export PARALLEL_BIN="$TOOLS_HOME/parallel --will-cite"
-    export SSHPASS_BIN="$TOOLS_HOME/sshpass"
-    export SSH_OPTS='-o stricthostkeychecking=no -o userknownhostsfile=/dev/null -q'
-    export REMOTE_CMD_FILE='/tmp/.sshaid.cmd.file'
+    TOOLS_HOME=$(dirname $(readlink -f "$0"))
+    PARALLEL_BIN="$TOOLS_HOME/parallel --will-cite"
+    SSHPASS_BIN="$TOOLS_HOME/sshpass"
+    SSH_OPTS='-o stricthostkeychecking=no -o userknownhostsfile=/dev/null -q'
+    REMOTE_EXE_FILE='/tmp/.sshaid_exe_file'
 
     COLUMN_LEN=$(stty size 2>/dev/null | awk '{print $2}')
     [[ $COLUMN_LEN ]] || COLUMN_LEN=80
     export COLUMN_LEN
 
+    export g_implict_copy=0
+    g_debug=0
+    g_quiet=0
+    g_reverse=0
+    g_out_in_order=''
+
     g_jobs=$(nproc 2>/dev/null)
     [[ $g_jobs ]] || g_jobs=8
+    g_timeout=60
 
     g_default_user='root'
     g_default_pass='x'
@@ -46,10 +53,9 @@ init_vars() {
 
     g_arg_num=0
     g_host_num=0
-    g_timeout=60
 
     g_ssh_cmd='' # command for ssh
-    g_ssh_cmd_file=''
+    g_ssh_exe_file=''
 
     g_ssh_bin='ssh'
     g_scp_bin='scp'
@@ -58,16 +64,11 @@ init_vars() {
 
     g_src=''
     g_dst=''
-
-    g_debug=0
-    g_quiet=0
-    g_reverse=0
-    g_out_in_order=''
 }
 
 timestamp() {
     date +%s
-} && export -f timestamp
+}
 
 trim() {
     trimmed_str="${1##*([[:space:]])}"
@@ -83,7 +84,7 @@ echo_exit() {
 help_global() {
     cat <<\EOF
 usage: sshaid <action> [options] [cmd] [args]
-use 'sshaid {help | h} <action>' to print help on a specific action
+use 'sshaid {help | h} <action>' to print help for a specific action
 
 actions:
     help (h)
@@ -116,7 +117,7 @@ common-options:
     --proxy http_proxy_ip:http_proxy_port
         optional, no defaults
 
-notice:
+attentions:
     1. options can not be combined, legal examples: '-d -k', '-t 2', illegal examples: '-dk', '-t2'.
     2. '-H' and '-h' can not be used at the same time.
     3. USER specified by -u can be overridden by USER in host:USER:password:port.
@@ -138,6 +139,7 @@ sshaid is an automation tool based on ssh, sshpass, and gnu parallel, it can be 
     2. ssh into host(s)(and execute command(s)).
 
 report bug(s) to <zhou.0@foxmail.com>.
+
 EOF
 
     exit
@@ -153,11 +155,11 @@ EOF
 
 help_ssh() {
     cat <<\EOF
-usage: sshaid ssh [--ssh-bin your-ssh-binary-path] [common-options] [-c cmdfile | cmd]
+usage: sshaid ssh [--ssh-bin your-ssh-binary-path] [common-options] [-e exe_file | cmd]
 use 'sshaid {help | h}' to print help about 'common options'
 
-notice that '-c cmdfile' and 'cmd' can not be used at the same time.
-if neither '-c cmdfile' nor 'cmd' is used, then just logins into host(s) specified by '-h/-H'.
+notice that '-e exe_file' and 'cmd' can not be used at the same time.
+if neither '-e exe_file' nor 'cmd' is used, then just logins into host(s) specified by '-h/-H'.
 else logins into host(s) specified by '-h/-H', executes command(s) and exit.
 EOF
 
@@ -295,8 +297,8 @@ parse_host_file() {
 
 check_option() {
     optval="${g_optval_dict["$1"]}"
-    [[ ! -z "$optval" ]]
-} && export -f check_option
+    [[ "$optval" ]]
+}
 
 parse_args() {
     if (($# < 2)); then
@@ -313,11 +315,14 @@ parse_args() {
             -d | -k | -q | -r)
                 g_optval_dict[$arg]=1;;
 
-            -j | -c | -h | -H | -u | -p | -P | -t | \
+            -j | -e | -h | -H | -u | -p | -P | -t | \
             -hsep | --hsep | -csep | --csep | -rsep | --rsep | -proxy | --proxy | \
             -ssh-bin | --ssh-bin | -scp-bin | --scp-bin | -rsync-bin | --rsync-bin)
                 shift
                 g_optval_dict[$arg]="$1";;
+
+            -*)
+                echo_exit 0 "unknown option: {{$arg}}";;
 
             *)
                 g_arg_list[$g_arg_num]="$arg"
@@ -365,10 +370,12 @@ debug_args() {
 
     echo
     echo "action: {{$g_action}}"
-    echo "jobs: {{$g_jobs}}"
-    echo "timeout: {{$g_timeout}}"
+    echo
     echo "quiet: {{$g_quiet}}"
     echo "out_in_order: {{$g_out_in_order}}"
+    echo
+    echo "jobs: {{$g_jobs}}"
+    echo "timeout: {{$g_timeout}}"
     echo
     echo "default_user: {{$g_default_user}}"
     echo "default_pass: {{$g_default_pass}}"
@@ -477,7 +484,8 @@ exec_request() {
         echo_exit 0 "args: {{$1}} invalid"
     fi
 
-    ((g_quiet == 0)) && echo_host_prompt $host_index $host $user
+    ((g_debug != 0 || g_quiet == 0 && g_implict_copy == 0)) && \
+        echo_host_prompt $host_index $host $user
 
     if ((g_debug)); then
         echo "request_line_pattern: {{$g_request_line_pattern}}"
@@ -492,43 +500,43 @@ exec_request() {
 
     export SSHPASS
     eval "$request"
-    echo
 } && export -f exec_request
 
 exec_in_parallel() {
     $PARALLEL_BIN $g_out_in_order --jobs $g_jobs --timeout $g_timeout \
         exec_request :::: <(build_requests)
-
-   #for ((i = 0; i < g_host_num; ++i)); do
-   #    exec_request $i
-   #done
 }
 
 sshaid_ssh() {
     g_ssh_cmd="${g_arg_list[1]}" # maybe empty
-    check_option '-c' && g_ssh_cmd_file="$optval"
+    check_option '-e' && g_ssh_exe_file="$optval"
 
     if ((g_debug)); then
         echo "ssh_cmd: {{$g_ssh_cmd}}"
-        echo "ssh_cmd_file: {{$g_ssh_cmd_file}}"
+        echo "ssh_exe_file: {{$g_ssh_exe_file}}"
         echo
     fi
 
-    if (($g_arg_num > 1)) && check_option '-c'; then
-        echo_exit 0 "'-c' and 'cmd' can not be used at the same time!"
+    if (($g_arg_num > 1)) && check_option '-e'; then
+        echo_exit 0 "'-e' and 'cmd' can not be used at the same time!"
     elif (($g_arg_num > 1)); then
         exec_in_parallel
-    elif check_option '-c'; then
+    elif check_option '-e'; then
+        export g_implict_copy=1
         g_reverse=0
-        g_src="$g_ssh_cmd_file"
-        g_dst="${REMOTE_CMD_FILE}.$(timestamp)_$$_$RANDOM"
-        [[ $g_scp_bin ]] && g_copy_bin="$g_scp_bin"
-        [[ -z $g_copy_bin && $g_rsync_bin ]] && g_copy_bin=$g_rsync_bin
-        [[ -z $g_copy_bin ]] && g_copy_bin=scp
+        g_src="$g_ssh_exe_file"
+        g_dst="${REMOTE_EXE_FILE}.$(timestamp)_$$_$RANDOM"
+
+        [[ "$g_scp_bin" != 'scp' ]] && g_copy_bin="$g_scp_bin"
+        [[ -z "$g_copy_bin" && "$g_rsync_bin" != 'rsync' ]] && g_copy_bin="$g_rsync_bin"
+        [[ "$g_copy_bin" ]] || g_copy_bin='scp'
+
         exec_in_parallel
 
+        export g_implict_copy=0
         g_copy_bin=
-        g_ssh_cmd="chmod +x $g_dst && $g_dst && rm -f $g_dst"
+        g_ssh_cmd="chmod +x $g_dst && $g_dst; rm -f $g_dst"
+
         exec_in_parallel
     else
         sshaid_login
@@ -538,6 +546,7 @@ sshaid_ssh() {
 sshaid_login() {
     for ((i = 0; i < g_host_num; ++i)); do
         build_request 'login' $i
+
         ((g_quiet == 0)) && echo_host_prompt $i ${g_host_list[i]} ${g_user_list[i]}
 
         if ((g_debug)); then
