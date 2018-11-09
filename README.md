@@ -3,7 +3,7 @@ sshaid
 ```
 $ sshaid
 usage: sshaid <action> [options] [cmd] [args]
-use 'sshaid {help | h} <action>' to print help on a specific action
+use 'sshaid {help | h} <action>' to print help for a specific action
 
 actions:
     help (h)
@@ -36,7 +36,7 @@ common-options:
     --proxy http_proxy_ip:http_proxy_port
         optional, no defaults
 
-notice:
+attentions:
     1. options can not be combined, legal examples: '-d -k', '-t 2', illegal examples: '-dk', '-t2'.
     2. '-H' and '-h' can not be used at the same time.
     3. USER specified by -u can be overridden by USER in host:USER:password:port.
