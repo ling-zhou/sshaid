@@ -13,28 +13,34 @@ actions:
 
 common-options:
     -H hosts-file
-        line-format: host:user:password:port, never be with -h, no defaults
+        line-format: host:user:password:port, never be with -h, no defaults.
     -h host:user:password:port
-        never be with -H, no defaults
+        never be with -H, no defaults.
     -u default-user
-        optional, defaults to 'root' if absence
+        optional, defaults to 'root'.
     -p default-password
-        optional, defaults to 'x' if absence
+        optional, defaults to 'x'.
     -P default-port
-        optional, defaults to '22' if absence
+        optional, defaults to '22'.
     -d
-        prints debug info
+        optional, prints debug info.
     -k
-        keeps sequence of output same as the order of input
-        normally the output of a job will be printed as soon as the job completes
+        optional, keeps sequence of output same as the order of input,
+        normally the output of a job will be printed as soon as the job completes.
     -q
-        suppresses extra information for sshaid, such as sshaid prompt and debug info
+        optional, suppresses extra information for sshaid, such as sshaid prompt and debug info.
+    -j N
+        optional, runs up to N jobs in parallel, 0 means as many as possible,
+        defaults to one job per CPU.
+    -t duration
+        optional, time out in seconds, if the command runs for longer than duration
+        it will get killed, defaults to 60s.
     --hsep single-line-host-separator
-        optional, defaults to ':' if absence
+        optional, defaults to ':'.
     --csep single-line-comment-separator
-        optional, defaults to '//' if absence
+        optional, defaults to '//'.
     --proxy http_proxy_ip:http_proxy_port
-        optional, no defaults
+        optional, no defaults.
 
 attentions:
     1. options can not be combined, legal examples: '-d -k', '-t 2', illegal examples: '-dk', '-t2'.
