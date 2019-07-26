@@ -3,8 +3,8 @@
 # @author Ling ZHOU(周龄) <zhou.0@foxmail.com>
 # @brief an automation tool based on ssh, sshpass, and gnu parallel.
 # @copyright Ling ZHOU(周龄) <zhou.0@foxmail.com>
-# @date 20181102-20181108
-# @version 1.0.1
+# @date 20190726
+# @version 1.0.2
 
 shopt -s extglob # for trim
 
@@ -16,23 +16,24 @@ declare -a g_pass_list
 declare -a g_port_list
 declare -a g_cmnt_list
 
-init_vars() {
+init() {
     export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
-    TOOLS_HOME=$(dirname $(readlink -f "$0"))
-    PARALLEL_BIN="$TOOLS_HOME/parallel --will-cite"
-    SSHPASS_BIN="$TOOLS_HOME/sshpass"
+    TOOLS_PATH=$(dirname $(readlink -f "$0"))
+    PATH=$TOOLS_PATH:$PATH
+
+    PARALLEL_BIN="parallel --will-cite"
+    SSHPASS_BIN=sshpass
     SSH_OPTS='-o stricthostkeychecking=no -o userknownhostsfile=/dev/null -q'
     REMOTE_EXE_FILE='/tmp/.sshaid_exe_file'
 
-    COLUMN_LEN=$(stty size 2>/dev/null | awk '{print $2}')
+    export COLUMN_LEN=$(stty size 2>/dev/null | awk '{print $2}')
     [[ $COLUMN_LEN ]] || COLUMN_LEN=80
-    export COLUMN_LEN
 
     export g_implict_copy=0
     g_debug=0
     g_quiet=0
-    g_reverse=0
-    g_out_in_order=''
+    g_to_local=0
+    g_keep_order=''
 
     g_jobs=$(nproc 2>/dev/null)
     [[ $g_jobs ]] || g_jobs=8
@@ -64,6 +65,8 @@ init_vars() {
 
     g_src=''
     g_dst=''
+
+    parse_args "$@"
 }
 
 timestamp() {
@@ -83,7 +86,8 @@ echo_exit() {
 
 help_global() {
     cat <<\EOF
-usage: sshaid <action> [options] [cmd] [args]
+usage: sshaid <action> [options] [command] [args]
+
 use 'sshaid {help | h} <action>' to print help for a specific action
 
 actions:
@@ -93,58 +97,56 @@ actions:
     rsync (rs)
 
 common-options:
-    -H hosts-file
+    -H, --Host hosts-file
         line-format: host:user:password:port, never be with -h, no defaults.
-    -h host:user:password:port
+    -h, --host host:user:password:port
         never be with -H, no defaults.
-    -u default-user
+    -u, --user default-user
         optional, defaults to 'root'.
-    -p default-password
+    -p, --password default-password
         optional, defaults to 'x'.
-    -P default-port
+    -P, --port default-port
         optional, defaults to '22'.
-    -d
+    -d, --debug
         optional, prints debug info.
-    -k
+    -k, --keep-order
         optional, keeps sequence of output same as the order of input,
         normally the output of a job will be printed as soon as the job completes.
-    -q
+    -q, --quiet
         optional, suppresses extra information for sshaid, such as sshaid prompt and debug info.
-    -j N
+    -j, --jobs N
         optional, runs up to N jobs in parallel, 0 means as many as possible,
         defaults to one job per CPU.
-    -t duration
+    -t, --timeout duration
         optional, time out in seconds, if the command runs for longer than duration
         it will get killed, defaults to 60s.
-    --hsep single-line-host-separator
+    --host-sep single-line-host-separator
         optional, defaults to ':'.
-    --csep single-line-comment-separator
+    --comment-sep single-line-comment-separator
         optional, defaults to '//'.
     --proxy http_proxy_ip:http_proxy_port
         optional, no defaults.
 
 attentions:
-    1. options can not be combined, legal examples: '-d -k', '-t 2', illegal examples: '-dk', '-t2'.
-    2. '-H' and '-h' can not be used at the same time.
-    3. USER specified by -u can be overridden by USER in host:USER:password:port.
-    4. PASSWORD specified by -p can be overridden by PASSWORD in host:user:PASSWORD:port.
-    5. PORT specified by -P can be overridden by PORT in host:user:password:PORT.
-    6. host-separator is needed if the member in between is not specified,
+    1. '-H' and '-h' can not be used at the same time.
+    2. USER specified by -u can be overridden by USER in host:USER:password:port.
+    3. PASSWORD specified by -p can be overridden by PASSWORD in host:user:PASSWORD:port.
+    4. PORT specified by -P can be overridden by PORT in host:user:password:PORT.
+    5. host-separator is needed if the member in between is not specified,
        for example: host::password
-            in this case, default user will be used, and it can be overridden by -u.
-    7. user defined host-separator must be specified if PASSWORD contains ':'.
-       for example: 1.2.3.4_@_root_@_my:/passwd_@_22 // real comment
-       # sshaid ... --hsep '_@_' ...
-    8. user defined single-line-comment-separator must be specified if PASSWORD contains '//'.
-       for example: 1.2.3.4:root:my//passwd:22 !@# real comment
-       # sshaid ... --csep '!@#' ...
-
+            in this case, default user will be used, and default user can be overridden by -u.
+    6. user defined single-line-host-separator must be specified if PASSWORD contains ':'.
+       for example: 1.2.3.4_@_root_@_my:/passwd_@_22 // this is comment
+       # sshaid ... --host-sep '_@_' ...
+    7. user defined single-line-comment-separator must be specified if PASSWORD contains '//'.
+       for example: 1.2.3.4:root:my//passwd:22 !@# this is comment
+       # sshaid ... --comment-sep '!@#' ...
 
 sshaid is an automation tool based on ssh, sshpass, and gnu parallel, it can be used to:
     1. scp/rsync file/dir(s) from local to remote, or in reverse.
     2. ssh into host(s)(and execute command(s)).
 
-report bug(s) to <zhou.0@foxmail.com>.
+report bug(s) to <https://github.com/ling-zhou/sshaid>.
 
 EOF
 
@@ -161,12 +163,15 @@ EOF
 
 help_ssh() {
     cat <<\EOF
-usage: sshaid ssh [--ssh-bin your-ssh-binary-path] [common-options] [-e exe_file | cmd]
+usage: sshaid ssh [--ssh-bin your-ssh-binary-path] [common-options] [-e/--exec exe_file | command]
+
 use 'sshaid {help | h}' to print help about 'common options'
 
-notice that '-e exe_file' and 'cmd' can not be used at the same time.
-if neither '-e exe_file' nor 'cmd' is used, then just logins into host(s) specified by '-h/-H'.
-else logins into host(s) specified by '-h/-H', executes command(s) and exit.
+notice that '-e/--exec exe_file' and 'command' can not be used at the same time.
+if neither '-e/--exec exe_file' nor 'command' is used, then
+    just logins into host(s) specified by '-h/-H'.
+else
+    logins into host(s) specified by '-h/-H', executes command(s) and exit.
 EOF
 
 exit
@@ -174,12 +179,14 @@ exit
 
 help_scp() {
     cat <<\EOF
-usage: sshaid scp [--scp-bin your-scp-binary-path] [-r] [common-options] source(s) destination
+usage: sshaid scp [--scp-bin your-scp-binary-path] [-L/--to-local] [common-options]
+              source(s) destination
+
 use 'sshaid {help | h}' to print help about 'common options
 
-without option '-r':
+without option '-L/--to-local':
     scp local source(s) to remote destination
-with option '-r':
+with option '-L/--to-local':
     scp remote source(s) to local destination
 EOF
 
@@ -188,13 +195,14 @@ exit
 
 help_rsync() {
     cat <<\EOF
-usage: sshaid {rsync | rs} [--rsync-bin your-rsync-binary-path] [-r] [common-options] \
-          source(s) destination
+usage: sshaid {rsync | rs} [--rsync-bin your-rsync-binary-path] [-L/--to-local] [common-options]
+              source(s) destination
+
 use 'sshaid {help | h}' to print help about 'common options'
 
-without option '-r':
+without option '-L/--to-local':
     rsync local source(s) to remote destination
-with option '-r':
+with option '-L/--to-local':
     rsync remote source(s) to local destination
 EOF
 
@@ -226,9 +234,9 @@ build_line_patterns() {
     local csep="$g_cmnt_sep"
     local rsep="$g_req_sep"
 
-    [[ "$hsep" == "" ]] && hsep=':'
-    [[ "$csep" == "" ]] && csep='//'
-    [[ "$rsep" == "" ]] && rsep=':@_@:'
+    [[ $hsep ]] || hsep=':'
+    [[ $csep ]] || csep='//'
+    [[ $rsep ]] || rsep=':@_@:'
 
     g_empty_host_line_pattern="^([[:space:]]*)($csep([[:space:]]*)(.*))?\$"
     g_host_line_pattern="^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)"
@@ -236,18 +244,20 @@ build_line_patterns() {
     export g_request_line_pattern="^([^ ]+) ([^ ]+) ([^ ]+) (.+)$rsep(.+)\$"
 
     if ((g_debug)); then
-        echo "host_sep: {{$hsep}}"
-        echo "cmnt_sep: {{$csep}}"
-        echo "req_sep: {{$rsep}}"
-        echo "empty_host_line_pattern: {{$g_empty_host_line_pattern}}"
-        echo "host_line_pattern: {{$g_host_line_pattern}}"
-        echo "request_line_pattern: {{$g_request_line_pattern}}"
+        echo "host-sep: {{$hsep}}"
+        echo "comment-sep: {{$csep}}"
+        echo "request-sep: {{$rsep}}"
+        echo
+        echo "empty-host-line-pattern: {{$g_empty_host_line_pattern}}"
+        echo "host-line-pattern: {{$g_host_line_pattern}}"
+        echo "request-line-pattern: {{$g_request_line_pattern}}"
+        echo
     fi
 }
 
 parse_host_line() {
     if [[ "$1" =~ $g_empty_host_line_pattern ]]; then
-        ((g_debug)) && echo "empty host line: {{$1}} is ignored"
+        ((g_debug)) && echo -e "empty-host-line: {{$1}} is ignored\n"
         return
     fi
 
@@ -258,7 +268,7 @@ parse_host_line() {
         local port=${BASH_REMATCH[4]}
         local cmnt=${BASH_REMATCH[8]}
     else
-        echo_exit 0 "host line: {{$1}} is invalid"
+        echo_exit 22 "host line: {{$1}} is invalid"
     fi
 
     if ((g_debug)); then
@@ -270,17 +280,17 @@ parse_host_line() {
         echo "    cmnt: {{$cmnt}}"
     fi
 
-    if [[ -z "$user" ]]; then
+    if [[ -z $user ]]; then
         user="$g_default_user"
         ((g_debug)) && echo "default user: {{$user}} will be used"
     fi
 
-    if [[ -z "$pass" ]]; then
+    if [[ -z $pass ]]; then
         pass="$g_default_pass"
         ((g_debug)) && echo "default password: {{$pass}} will be used"
     fi
 
-    if [[ -z "$port" ]]; then
+    if [[ -z $port ]]; then
         port="$g_default_port"
         ((g_debug)) && echo "default port: {{$port}} will be used"
     fi
@@ -294,7 +304,7 @@ parse_host_line() {
 }
 
 parse_host_file() {
-    ((g_debug)) && echo -e "\nhost file: {{$1}}"
+    ((g_debug)) && echo -e "host-file: {{$1}}"
 
     while read line; do
         parse_host_line "$line"
@@ -314,56 +324,107 @@ parse_args() {
         help_global
     fi
 
+    local long_opts='debug,keep-order,quiet,to-local,Host:,host:,user:,password:'
+    long_opts+=',port:,jobs:,timeout:,exec:,host-sep:,comment-sep:'
+    long_opts+=',request-sep:,proxy:,ssh-bin:,scp-bin:,rsync-bin:'
+    local short_opts='dkqLH:h:u:p:P:j:t:e:'
+    local options=$(getopt -l $long_opts -o $short_opts -- "$@" 2>/dev/null)
+
+    eval set -- "$options"
+
     while (($# > 0)); do
-        local arg="$1"
+        local optarg="$1"
 
-        case "$arg" in
-            -d | -k | -q | -r)
-                g_optval_dict[$arg]=1;;
+        case "$optarg" in
+            -d | --debug)
+                g_optval_dict['-d']=1;;
 
-            -h | -H | -u | -p | -P | -j | -t | -e | \
-            -hsep | --hsep | -csep | --csep | -rsep | --rsep | -proxy | --proxy | \
-            -ssh-bin | --ssh-bin | -scp-bin | --scp-bin | -rsync-bin | --rsync-bin)
+            -k | --keep-order)
+                g_optval_dict['-k']=1;;
+
+            -q | --quiet)
+                g_optval_dict['-q']=1;;
+
+            -L | --to-local)
+                g_optval_dict['-L']=1;;
+
+            -H | --Host)
                 shift
-                g_optval_dict[$arg]="$1";;
+                g_optval_dict['-H']="$1";;
+
+            -h | --host)
+                shift
+                g_optval_dict['-h']="$1";;
+
+            -u | --user)
+                shift
+                g_optval_dict['-u']="$1";;
+
+            -p | --password)
+                shift
+                g_optval_dict['-p']="$1";;
+
+            -P | --port)
+                shift
+                g_optval_dict['-P']="$1";;
+
+            -j | --jobs)
+                shift
+                g_optval_dict['-j']="$1";;
+
+            -t | --timeout)
+                shift
+                g_optval_dict['-t']="$1";;
+
+            -e | --exec)
+                shift
+                g_optval_dict['-e']="$1";;
+
+            --host-sep | --comment-sep | --request-sep | \
+            --proxy | --ssh-bin | --scp-bin | --rsync-bin)
+                shift
+                g_optval_dict[$optarg]="$1";;
+
+            --)
+                ;;
 
             -*)
-                echo_exit 0 "unknown option: {{$arg}}";;
+                echo_exit 22 "unknown option: {{$optarg}}";;
 
             *)
-                g_arg_list[$g_arg_num]="$arg"
+                g_arg_list[$g_arg_num]="$optarg"
                 ((++g_arg_num));;
         esac
 
         shift
     done
 
-    ((g_arg_num == 0)) && echo_exit 0 "action needed"
+    ((g_arg_num == 0)) && echo_exit 2 "action needed"
     g_action=${g_arg_list[0]}
 
     check_option '-H' && check_option '-h' && \
-        echo_exit 0 "'-H' and '-h' can not be used at the same time"
+        echo_exit 1 "'-H' and '-h' can not be used at the same time"
 
     check_option '-d' && g_debug=1
-    check_option '-k' && g_out_in_order='-k'
+    check_option '-k' && g_keep_order='-k'
     check_option '-q' && g_quiet=1 && g_debug=0
     check_option '-j' && g_jobs="$optval"
     check_option '-u' && g_default_user="$optval"
     check_option '-p' && g_default_pass="$optval"
     check_option '-P' && g_default_port="$optval"
     check_option '-t' && g_timeout="$optval"
-    check_option '-hsep' || check_option '--hsep' && g_host_sep="$optval"
-    check_option '-csep' || check_option '--csep' && g_cmnt_sep="$optval"
-    check_option '-rsep' || check_option '--rsep' && g_req_sep="$optval"
-    check_option '-proxy' || check_option '--proxy' && g_http_proxy="$optval"
-    check_option '-ssh-bin' || check_option '--ssh-bin' && g_ssh_bin="$optval"
-    check_option '-scp-bin' || check_option '--scp-bin' && g_scp_bin="$optval"
-    check_option '-rsync-bin' || check_option '--rsync-bin' && g_rsync_bin="$optval"
+    check_option '--host-sep' && g_host_sep="$optval"
+    check_option '--comment-sep' && g_cmnt_sep="$optval"
+    check_option '--request-sep' && g_req_sep="$optval"
+    check_option '--proxy' && g_http_proxy="$optval"
+    check_option '--ssh-bin' && g_ssh_bin="$optval"
+    check_option '--scp-bin' && g_scp_bin="$optval"
+    check_option '--rsync-bin' && g_rsync_bin="$optval"
 
-    build_line_patterns "$g_host_sep" "$g_cmnt_sep" "$g_req_sep"
+    build_line_patterns
 
-    check_option '-h' && parse_host_line "$optval"
     check_option '-H' && parse_host_file "$optval"
+    check_option '-h' && parse_host_line "$optval"
 
     export g_debug
     export g_quiet
@@ -378,34 +439,34 @@ debug_args() {
     echo "action: {{$g_action}}"
     echo
     echo "quiet: {{$g_quiet}}"
-    echo "out_in_order: {{$g_out_in_order}}"
+    echo "keep-order: {{$g_keep_order}}"
     echo
     echo "jobs: {{$g_jobs}}"
     echo "timeout: {{$g_timeout}}"
     echo
-    echo "default_user: {{$g_default_user}}"
-    echo "default_pass: {{$g_default_pass}}"
-    echo "default_port: {{$g_default_port}}"
+    echo "default-user: {{$g_default_user}}"
+    echo "default-pass: {{$g_default_pass}}"
+    echo "default-port: {{$g_default_port}}"
     echo
-    echo "http_proxy: {{$g_http_proxy}}"
+    echo "http-proxy: {{$g_http_proxy}}"
     echo
-    echo "ssh_bin: {{$g_ssh_bin}}"
-    echo "scp_bin: {{$g_scp_bin}}"
-    echo "rsync_bin: {{$g_rsync_bin}}"
+    echo "ssh-bin: {{$g_ssh_bin}}"
+    echo "scp-bin: {{$g_scp_bin}}"
+    echo "rsync-bin: {{$g_rsync_bin}}"
     echo
-    echo "optval_dict:"
+    echo "optval-dict:"
     for k in "${!g_optval_dict[@]}"; do
         echo "    {{$k}} => {{${g_optval_dict[$k]}}}"
     done
     echo
-    echo "arg_num: {{$g_arg_num}}"
-    echo "arg_list:"
+    echo "arg-num: {{$g_arg_num}}"
+    echo "arg-list:"
     for ((i = 0; i < g_arg_num; ++i)); do
         echo "    arg[$i]: {{${g_arg_list[i]}}}"
     done
     echo
-    echo "host_num: {{$g_host_num}}"
-    echo "host_list:"
+    echo "host-num: {{$g_host_num}}"
+    echo "host-list:"
     for ((i = 0; i < g_host_num; ++i)); do
         echo "    host[$i]: {{${g_host_list[i]}}}"
         echo "    user[$i]: {{${g_user_list[i]}}}"
@@ -432,7 +493,7 @@ build_request() {
     if [[ $g_copy_bin ]]; then
         local dst="$g_dst"
 
-        if ((g_reverse)); then # from remote to local
+        if ((g_to_local)); then # from remote to local
             if ((g_host_num > 1)); then
                 dst+="/$host"
                 mkdir -p "$dst"
@@ -487,16 +548,16 @@ exec_request() {
         local request="${BASH_REMATCH[4]}"
         SSHPASS="${BASH_REMATCH[5]}"
     else
-        echo_exit 0 "args: {{$1}} invalid"
+        echo_exit 22 "args: {{$1}} are invalid"
     fi
 
     ((g_debug != 0 || g_quiet == 0 && g_implict_copy == 0)) && \
         echo_host_prompt $host_index $host $user
 
     if ((g_debug)); then
-        echo "request_line_pattern: {{$g_request_line_pattern}}"
-        echo "request_line: {{$1}}"
-        echo "host_index: {{$host_index}}"
+        echo "request-line-pattern: {{$g_request_line_pattern}}"
+        echo "request-line: {{$1}}"
+        echo "host-index: {{$host_index}}"
         echo "host: {{$host}}"
         echo "user: {{$user}}"
         echo "request: {{$request}}"
@@ -509,7 +570,7 @@ exec_request() {
 } && export -f exec_request
 
 exec_in_parallel() {
-    $PARALLEL_BIN $g_out_in_order --jobs $g_jobs --timeout $g_timeout \
+    $PARALLEL_BIN $g_keep_order --jobs $g_jobs --timeout $g_timeout \
         exec_request :::: <(build_requests)
 }
 
@@ -518,18 +579,18 @@ sshaid_ssh() {
     check_option '-e' && g_ssh_exe_file="$optval"
 
     if ((g_debug)); then
-        echo "ssh_cmd: {{$g_ssh_cmd}}"
-        echo "ssh_exe_file: {{$g_ssh_exe_file}}"
+        echo "ssh-cmd: {{$g_ssh_cmd}}"
+        echo "ssh-exe-file: {{$g_ssh_exe_file}}"
         echo
     fi
 
     if (($g_arg_num > 1)) && check_option '-e'; then
-        echo_exit 0 "'-e' and 'cmd' can not be used at the same time!"
+        echo_exit 1 "'-e' and 'command' can not be used at the same time!"
     elif (($g_arg_num > 1)); then
         exec_in_parallel
     elif check_option '-e'; then
         export g_implict_copy=1
-        g_reverse=0
+        g_to_local=0
         g_src="$g_ssh_exe_file"
         g_dst="${REMOTE_EXE_FILE}.$(timestamp)_$$_$RANDOM"
 
@@ -556,7 +617,7 @@ sshaid_login() {
         ((g_quiet == 0)) && echo_host_prompt $i ${g_host_list[i]} ${g_user_list[i]}
 
         if ((g_debug)); then
-            echo "host_index: {{$i}}"
+            echo "host-index: {{$i}}"
             echo "host: {{${g_host_list[i]}}}"
             echo "user: {{${g_user_list[i]}}}"
             echo "request: {{$request}}"
@@ -595,14 +656,14 @@ echo_host_prompt() {
 } && export -f echo_host_prompt
 
 sshaid_remote_copy() {
-    ((g_arg_num < 3)) && echo_exit 0 "source and destination are both needed!"
+    ((g_arg_num < 3)) && echo_exit 2 "source and destination are both needed!"
 
-    check_option '-r' && g_reverse=1
+    check_option '-L' && g_to_local=1
 
     g_dst="${g_arg_list[$[g_arg_num - 1]]}"
 
     ((--g_arg_num)) # drops the last arg
-    ((g_reverse && g_arg_num != 2)) && echo_exit 0 "can copy only ONE source from remote to local!"
+    ((g_to_local && g_arg_num != 2)) && echo_exit 1 "can copy only ONE source from remote to local!"
 
     for ((i = 1; i < g_arg_num; ++i)); do
         [[ $g_src ]] && g_src+=" ${g_arg_list[i]}" || g_src="${g_arg_list[i]}"
@@ -615,8 +676,8 @@ sshaid_remote_copy() {
 debug_remote_copy() {
     ((g_debug == 0)) && return
 
-    echo "reverse: {{$g_reverse}}"
-    echo "copy_bin: {{$g_copy_bin}}"
+    echo "to-local: {{$g_to_local}}"
+    echo "copy-bin: {{$g_copy_bin}}"
     echo "source(s): {{$g_src}}"
     echo "destination: {{$g_dst}}"
     echo
@@ -632,8 +693,9 @@ sshaid_rsync() {
     sshaid_remote_copy
 }
 
-sshaid_run() {
-    chmod +x "$TOOLS_HOME"/{parallel,sshpass,sshaid}
+run() {
+    [[ -f "$TOOLS_PATH/parallel" ]] && chmod +x "$TOOLS_PATH/parallel"
+    [[ -f "$TOOLS_TH/sshpass" ]] && chmod +x "$TOOLS_PATH/sshpass"
 
     case $g_action in
         h | help)
@@ -652,6 +714,5 @@ sshaid_run() {
     esac
 }
 
-init_vars
-parse_args "$@"
-sshaid_run
+init "$@"
+run
