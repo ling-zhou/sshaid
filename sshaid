@@ -695,7 +695,7 @@ sshaid_rsync() {
 
 run() {
     [[ -f "$TOOLS_PATH/parallel" ]] && chmod +x "$TOOLS_PATH/parallel"
-    [[ -f "$TOOLS_TH/sshpass" ]] && chmod +x "$TOOLS_PATH/sshpass"
+    [[ -f "$TOOLS_PATH/sshpass" ]] && chmod +x "$TOOLS_PATH/sshpass"
 
     case $g_action in
         h | help)
