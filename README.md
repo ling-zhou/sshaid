@@ -14,9 +14,9 @@ actions:
 
 common-options:
     -H, --Host hosts-file
-        line-format: host:user:password:port, never be with -h, no defaults.
-    -h, --host host:user:password:port
-        never be with -H, no defaults.
+        line-format: host;user;password;port, do not use it with '-h', no default value.
+    -h, --host host;user;password;port
+        do not use it with '-H', no default value.
     -u, --user default-user
         optional, defaults to 'root'.
     -p, --password default-password
@@ -36,26 +36,26 @@ common-options:
     -t, --timeout duration
         optional, time out in seconds, if the command runs for longer than duration
         it will get killed, defaults to 60s.
-    --host-sep single-line-host-separator
-        optional, defaults to ':'.
+    --field-sep single-line-field-separator
+        optional, defaults to ';'.
     --comment-sep single-line-comment-separator
         optional, defaults to '//'.
     --proxy http_proxy_ip:http_proxy_port
-        optional, no defaults.
+        optional, no default value.
 
 attentions:
-    1. '-H' and '-h' can not be used at the same time.
-    2. USER specified by -u can be overridden by USER in host:USER:password:port.
-    3. PASSWORD specified by -p can be overridden by PASSWORD in host:user:PASSWORD:port.
-    4. PORT specified by -P can be overridden by PORT in host:user:password:PORT.
-    5. host-separator is needed if the member in between is not specified,
+    1. '-H' and '-h' can not be used together.
+    2. user specified by '-u' can be overridden by USER in 'host;USER;password;port'.
+    3. password specified by '-p' can be overridden by PASSWORD in 'host;user;PASSWORD;port'.
+    4. port specified by '-P' can be overridden by PORT in 'host;user;password;PORT'.
+    5. field-separator is needed if the member in between is not specified,
        for example: host::password
             in this case, default user will be used, and default user can be overridden by -u.
-    6. user defined single-line-host-separator must be specified if PASSWORD contains ':'.
-       for example: 1.2.3.4_@_root_@_my:/passwd_@_22 // this is comment
-       # sshaid ... --host-sep '_@_' ...
+    6. user defined single-line-field-separator must be specified if password contains ';'.
+       for example: '1.2.3.4_@_root_@_my:/passwd_@_22 // this is comment'
+       # sshaid ... --field-sep '_@_' ...
     7. user defined single-line-comment-separator must be specified if PASSWORD contains '//'.
-       for example: 1.2.3.4:root:my//passwd:22 !@# this is comment
+       for example: '1.2.3.4:root:my//passwd:22 !@# this is comment'
        # sshaid ... --comment-sep '!@#' ...
 
 sshaid is an automation tool based on ssh, sshpass, and gnu parallel, it can be used to:
