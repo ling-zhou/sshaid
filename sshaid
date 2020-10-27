@@ -1,10 +1,10 @@
 #!/bin/bash
 # vim:et:ft=sh:
-# @author Ling ZHOU(周龄) <zhou.0@foxmail.com>
-# @brief an automation tool based on ssh, sshpass, and gnu parallel.
-# @copyright Ling ZHOU(周龄) <zhou.0@foxmail.com>
-# @date 20190726
-# @version 1.0.2
+# @author Zhou Ling(周龄) <zhou.0@foxmail.com>
+# @brief an automation tool based on ssh, sshpass, and GNU parallel.
+# @copyright Zhou Ling(周龄) <zhou.0@foxmail.com>
+# @date 20201027
+# @version 1.0.3
 
 shopt -s extglob # for trim
 
@@ -43,9 +43,9 @@ init() {
     g_default_pass='x'
     g_default_port='22'
 
-    g_host_sep=':'
-    g_cmnt_sep='//'
-    g_req_sep=':@_@:'
+    g_field_sep=';'
+    g_comment_sep='//'
+    g_request_sep=':@_@:'
     g_http_proxy=''
 
     g_empty_host_line_pattern=''
@@ -98,9 +98,9 @@ actions:
 
 common-options:
     -H, --Host hosts-file
-        line-format: host:user:password:port, never be with -h, no defaults.
-    -h, --host host:user:password:port
-        never be with -H, no defaults.
+        line-format: host;user;password;port, do not use it with '-h', no default value.
+    -h, --host host;user;password;port
+        do not use it with '-H', no default value.
     -u, --user default-user
         optional, defaults to 'root'.
     -p, --password default-password
@@ -120,26 +120,26 @@ common-options:
     -t, --timeout duration
         optional, time out in seconds, if the command runs for longer than duration
         it will get killed, defaults to 60s.
-    --host-sep single-line-host-separator
-        optional, defaults to ':'.
+    --field-sep single-line-field-separator
+        optional, defaults to ';'.
     --comment-sep single-line-comment-separator
         optional, defaults to '//'.
     --proxy http_proxy_ip:http_proxy_port
-        optional, no defaults.
+        optional, no default value.
 
 attentions:
-    1. '-H' and '-h' can not be used at the same time.
-    2. USER specified by -u can be overridden by USER in host:USER:password:port.
-    3. PASSWORD specified by -p can be overridden by PASSWORD in host:user:PASSWORD:port.
-    4. PORT specified by -P can be overridden by PORT in host:user:password:PORT.
-    5. host-separator is needed if the member in between is not specified,
+    1. '-H' and '-h' can not be used together.
+    2. user specified by '-u' can be overridden by USER in 'host;USER;password;port'.
+    3. password specified by '-p' can be overridden by PASSWORD in 'host;user;PASSWORD;port'.
+    4. port specified by '-P' can be overridden by PORT in 'host;user;password;PORT'.
+    5. field-separator is needed if the member in between is not specified,
        for example: host::password
             in this case, default user will be used, and default user can be overridden by -u.
-    6. user defined single-line-host-separator must be specified if PASSWORD contains ':'.
-       for example: 1.2.3.4_@_root_@_my:/passwd_@_22 // this is comment
-       # sshaid ... --host-sep '_@_' ...
+    6. user defined single-line-field-separator must be specified if password contains ';'.
+       for example: '1.2.3.4_@_root_@_my:/passwd_@_22 // this is comment'
+       # sshaid ... --field-sep '_@_' ...
     7. user defined single-line-comment-separator must be specified if PASSWORD contains '//'.
-       for example: 1.2.3.4:root:my//passwd:22 !@# this is comment
+       for example: '1.2.3.4:root:my//passwd:22 !@# this is comment'
        # sshaid ... --comment-sep '!@#' ...
 
 sshaid is an automation tool based on ssh, sshpass, and gnu parallel, it can be used to:
@@ -167,7 +167,7 @@ usage: sshaid ssh [--ssh-bin your-ssh-binary-path] [common-options] [-e/--exec e
 
 use 'sshaid {help | h}' to print help about 'common options'
 
-notice that '-e/--exec exe_file' and 'command' can not be used at the same time.
+notice that '-e/--exec exe_file' and 'command' can not be used together.
 if neither '-e/--exec exe_file' nor 'command' is used, then
     just logins into host(s) specified by '-h/-H'.
 else
@@ -230,21 +230,21 @@ help_dispatch() {
 }
 
 build_line_patterns() {
-    local hsep="$g_host_sep"
-    local csep="$g_cmnt_sep"
-    local rsep="$g_req_sep"
+    local fsep="$g_field_sep"
+    local csep="$g_comment_sep"
+    local rsep="$g_request_sep"
 
-    [[ $hsep ]] || hsep=':'
+    [[ $fsep ]] || fsep=';'
     [[ $csep ]] || csep='//'
     [[ $rsep ]] || rsep=':@_@:'
 
     g_empty_host_line_pattern="^([[:space:]]*)($csep([[:space:]]*)(.*))?\$"
-    g_host_line_pattern="^([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)"
-    g_host_line_pattern+="$hsep(.*)$hsep(.*)$hsep([0-9]*)(([[:space:]]*)$csep([[:space:]]*)(.*))?\$"
+    g_host_line_pattern="^([]\[\.:_0-9a-zA-Z]+)$fsep([_0-9a-zA-Z]*)$fsep(.*)$fsep([0-9]*)"
+    g_host_line_pattern+="(([[:space:]]*)$csep([[:space:]]*)(.*))?\$"
     export g_request_line_pattern="^([^ ]+) ([^ ]+) ([^ ]+) (.+)$rsep(.+)\$"
 
     if ((g_debug)); then
-        echo "host-sep: {{$hsep}}"
+        echo "field-sep: {{$fsep}}"
         echo "comment-sep: {{$csep}}"
         echo "request-sep: {{$rsep}}"
         echo
@@ -300,6 +300,7 @@ parse_host_line() {
     g_pass_list[$g_host_num]=$pass
     g_port_list[$g_host_num]=$port
     g_cmnt_list[$g_host_num]=$cmnt
+
     ((++g_host_num))
 }
 
@@ -325,7 +326,7 @@ parse_args() {
     fi
 
     local long_opts='debug,keep-order,quiet,to-local,Host:,host:,user:,password:'
-    long_opts+=',port:,jobs:,timeout:,exec:,host-sep:,comment-sep:'
+    long_opts+=',port:,jobs:,timeout:,exec:,field-sep:,comment-sep:'
     long_opts+=',request-sep:,proxy:,ssh-bin:,scp-bin:,rsync-bin:'
     local short_opts='dkqLH:h:u:p:P:j:t:e:'
     local options=$(getopt -l $long_opts -o $short_opts -- "$@" 2>/dev/null)
@@ -380,7 +381,7 @@ parse_args() {
                 shift
                 g_optval_dict['-e']="$1";;
 
-            --host-sep | --comment-sep | --request-sep | \
+            --field-sep | --comment-sep | --request-sep | \
             --proxy | --ssh-bin | --scp-bin | --rsync-bin)
                 shift
                 g_optval_dict[$optarg]="$1";;
@@ -403,7 +404,7 @@ parse_args() {
     g_action=${g_arg_list[0]}
 
     check_option '-H' && check_option '-h' && \
-        echo_exit 1 "'-H' and '-h' can not be used at the same time"
+        echo_exit 1 "'-H' and '-h' can not be used together"
 
     check_option '-d' && g_debug=1
     check_option '-k' && g_keep_order='-k'
@@ -413,9 +414,9 @@ parse_args() {
     check_option '-p' && g_default_pass="$optval"
     check_option '-P' && g_default_port="$optval"
     check_option '-t' && g_timeout="$optval"
-    check_option '--host-sep' && g_host_sep="$optval"
-    check_option '--comment-sep' && g_cmnt_sep="$optval"
-    check_option '--request-sep' && g_req_sep="$optval"
+    check_option '--field-sep' && g_field_sep="$optval"
+    check_option '--comment-sep' && g_comment_sep="$optval"
+    check_option '--request-sep' && g_request_sep="$optval"
     check_option '--proxy' && g_http_proxy="$optval"
     check_option '--ssh-bin' && g_ssh_bin="$optval"
     check_option '--scp-bin' && g_scp_bin="$optval"
@@ -531,7 +532,7 @@ EOF
     fi
 
     [[ $action != 'login' ]] && \
-        echo "$host_index $host $user $request$g_req_sep${g_pass_list[$host_index]}"
+        echo "$host_index $host $user $request$g_request_sep${g_pass_list[$host_index]}"
 }
 
 build_requests() {
@@ -560,8 +561,8 @@ exec_request() {
         echo "host-index: {{$host_index}}"
         echo "host: {{$host}}"
         echo "user: {{$user}}"
-        echo "request: {{$request}}"
         echo "password: {{$SSHPASS}}"
+        echo "request: {{$request}}"
         echo
     fi
 
@@ -585,7 +586,7 @@ sshaid_ssh() {
     fi
 
     if (($g_arg_num > 1)) && check_option '-e'; then
-        echo_exit 1 "'-e' and 'command' can not be used at the same time!"
+        echo_exit 1 "'-e' and 'command' can not be used together!"
     elif (($g_arg_num > 1)); then
         exec_in_parallel
     elif check_option '-e'; then
@@ -620,8 +621,8 @@ sshaid_login() {
             echo "host-index: {{$i}}"
             echo "host: {{${g_host_list[i]}}}"
             echo "user: {{${g_user_list[i]}}}"
-            echo "request: {{$request}}"
             echo "password: {{${g_pass_list[i]}}}"
+            echo "request: {{$request}}"
             echo
         fi
 
@@ -694,9 +695,6 @@ sshaid_rsync() {
 }
 
 run() {
-    [[ -f "$TOOLS_PATH/parallel" ]] && chmod +x "$TOOLS_PATH/parallel"
-    [[ -f "$TOOLS_PATH/sshpass" ]] && chmod +x "$TOOLS_PATH/sshpass"
-
     case $g_action in
         h | help)
             help_dispatch;;
@@ -714,5 +712,9 @@ run() {
     esac
 }
 
-init "$@"
-run
+main() {
+    init "$@"
+    run
+}
+
+main "$@"
