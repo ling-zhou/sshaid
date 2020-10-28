@@ -3,8 +3,6 @@
 # @author Zhou Ling(周龄) <zhou.0@foxmail.com>
 # @brief an automation tool based on ssh, sshpass, and GNU parallel.
 # @copyright Zhou Ling(周龄) <zhou.0@foxmail.com>
-# @date 20201027
-# @version 1.0.3
 
 shopt -s extglob # for trim
 
@@ -30,6 +28,7 @@ init() {
     [[ $COLUMN_LEN ]] || COLUMN_LEN=80
 
     export g_implict_copy=0
+    g_action=
     g_debug=0
     g_quiet=0
     g_to_local=0
@@ -88,7 +87,7 @@ help_global() {
     cat <<\EOF
 usage: sshaid <action> [options] [command] [args]
 
-use 'sshaid {help | h} <action>' to print help for a specific action
+use 'sshaid help <action>' to print help for a specific action
 
 actions:
     help (h)
@@ -143,7 +142,7 @@ attentions:
        # sshaid ... --comment-sep '!@#' ...
 
 sshaid is an automation tool based on ssh, sshpass, and gnu parallel, it can be used to:
-    1. scp/rsync file/dir(s) from local to remote, or in reverse.
+    1. scp|rsync file|dir(s) from local to remote, or in reverse.
     2. ssh into host(s)(and execute command(s)).
 
 report bug(s) to <https://github.com/ling-zhou/sshaid>.
@@ -155,7 +154,7 @@ EOF
 
 help_help() {
     cat <<\EOF
-usage: sshaid {help | h} [action]
+usage: sshaid help [action]
 EOF
 
     exit
@@ -163,15 +162,15 @@ EOF
 
 help_ssh() {
     cat <<\EOF
-usage: sshaid ssh [--ssh-bin your-ssh-binary-path] [common-options] [-e/--exec exe_file | command]
+usage: sshaid ssh [--ssh-bin your-ssh-binary-path] [common-options] [-e|--exec exe_file | command]
 
-use 'sshaid {help | h}' to print help about 'common options'
+use 'sshaid help' to print help about 'common options'
 
-notice that '-e/--exec exe_file' and 'command' can not be used together.
-if neither '-e/--exec exe_file' nor 'command' is used, then
-    just logins into host(s) specified by '-h/-H'.
+notice that '-e|--exec exe_file' and 'command' can not be used together.
+if neither '-e|--exec exe_file' nor 'command' is used, then
+    just logins into host(s) specified by '-h|-H'.
 else
-    logins into host(s) specified by '-h/-H', executes command(s) and exit.
+    logins into host(s) specified by '-h|-H', executes command(s) and exits.
 EOF
 
 exit
@@ -179,14 +178,14 @@ exit
 
 help_scp() {
     cat <<\EOF
-usage: sshaid scp [--scp-bin your-scp-binary-path] [-L/--to-local] [common-options]
+usage: sshaid scp [--scp-bin your-scp-binary-path] [-L|--to-local] [common-options]
               source(s) destination
 
-use 'sshaid {help | h}' to print help about 'common options
+use 'sshaid help' to print help about 'common options
 
-without option '-L/--to-local':
+without option '-L|--to-local':
     scp local source(s) to remote destination
-with option '-L/--to-local':
+with option '-L|--to-local':
     scp remote source(s) to local destination
 EOF
 
@@ -195,14 +194,14 @@ exit
 
 help_rsync() {
     cat <<\EOF
-usage: sshaid {rsync | rs} [--rsync-bin your-rsync-binary-path] [-L/--to-local] [common-options]
+usage: sshaid rsync [--rsync-bin your-rsync-binary-path] [-L|--to-local] [common-options]
               source(s) destination
 
-use 'sshaid {help | h}' to print help about 'common options'
+use 'sshaid help' to print help about 'common options'
 
-without option '-L/--to-local':
+without option '-L|--to-local':
     rsync local source(s) to remote destination
-with option '-L/--to-local':
+with option '-L|--to-local':
     rsync remote source(s) to local destination
 EOF
 
@@ -222,9 +221,6 @@ help_dispatch() {
         rs | rsync)
             help_rsync;;
         *)
-            echo "action: {{$action}} is unknown!"
-            echo "********************************************************************************"
-            echo
             help_global;;
     esac
 }
@@ -319,9 +315,6 @@ check_option() {
 
 parse_args() {
     if (($# < 2)); then
-        echo "args are too few!"
-        echo "********************************************************************************"
-        echo
         help_global
     fi
 
@@ -400,11 +393,10 @@ parse_args() {
         shift
     done
 
-    ((g_arg_num == 0)) && echo_exit 2 "action needed"
-    g_action=${g_arg_list[0]}
+    set_and_check_action
 
     check_option '-H' && check_option '-h' && \
-        echo_exit 1 "'-H' and '-h' can not be used together"
+        echo_exit 1 "'-H' and '-h' can not be used together!"
 
     check_option '-d' && g_debug=1
     check_option '-k' && g_keep_order='-k'
@@ -424,13 +416,35 @@ parse_args() {
 
     build_line_patterns
 
-    check_option '-H' && parse_host_file "$optval"
-    check_option '-h' && parse_host_line "$optval"
+    if check_option '-H'; then
+        parse_host_file "$optval"
+    elif check_option '-h'; then
+        parse_host_line "$optval"
+    else
+        echo_exit 22 "'-H' or '-h' is needed!"
+    fi
 
     export g_debug
     export g_quiet
 
     debug_args
+}
+
+set_and_check_action() {
+    ((g_arg_num == 0)) && echo_exit 2 "action is needed!"
+
+    g_action=${g_arg_list[0]}
+    found=0
+
+    for action in h help ssh scp rs rsync; do
+        if [[ "$action" == $g_action ]]; then
+            found=1
+            break
+        fi
+    done
+
+    ((found == 0)) && echo_exit 22 "action($g_action) is invalid"
+    [[ $g_action == h || $g_action == help ]] && help_dispatch
 }
 
 debug_args() {
@@ -462,13 +476,13 @@ debug_args() {
     echo
     echo "arg-num: {{$g_arg_num}}"
     echo "arg-list:"
-    for ((i = 0; i < g_arg_num; ++i)); do
+    for ((i = 0; i < g_arg_num; i++)); do
         echo "    arg[$i]: {{${g_arg_list[i]}}}"
     done
     echo
     echo "host-num: {{$g_host_num}}"
     echo "host-list:"
-    for ((i = 0; i < g_host_num; ++i)); do
+    for ((i = 0; i < g_host_num; i++)); do
         echo "    host[$i]: {{${g_host_list[i]}}}"
         echo "    user[$i]: {{${g_user_list[i]}}}"
         echo "    pass[$i]: {{${g_pass_list[i]}}}"
@@ -536,7 +550,7 @@ EOF
 }
 
 build_requests() {
-    for ((i = 0; i < g_host_num; ++i)); do
+    for ((i = 0; i < g_host_num; i++)); do
         build_request 'exec' $i
     done
 }
@@ -587,8 +601,10 @@ sshaid_ssh() {
 
     if (($g_arg_num > 1)) && check_option '-e'; then
         echo_exit 1 "'-e' and 'command' can not be used together!"
+
     elif (($g_arg_num > 1)); then
         exec_in_parallel
+
     elif check_option '-e'; then
         export g_implict_copy=1
         g_to_local=0
@@ -612,7 +628,7 @@ sshaid_ssh() {
 }
 
 sshaid_login() {
-    for ((i = 0; i < g_host_num; ++i)); do
+    for ((i = 0; i < g_host_num; i++)); do
         build_request 'login' $i
 
         ((g_quiet == 0)) && echo_host_prompt $i ${g_host_list[i]} ${g_user_list[i]}
@@ -645,11 +661,11 @@ echo_host_prompt() {
     local prompt=''
     local i # 避免污染同名变量!
 
-    for ((i = 0; i < left_size; ++i)); do
+    for ((i = 0; i < left_size; i++)); do
         prompt+='*'
     done
     prompt+=" $str "
-    for ((i = 0; i < right_size; ++i)); do
+    for ((i = 0; i < right_size; i++)); do
         prompt+='*'
     done
 
@@ -660,15 +676,13 @@ sshaid_remote_copy() {
     ((g_arg_num < 3)) && echo_exit 2 "source and destination are both needed!"
 
     check_option '-L' && g_to_local=1
+    ((g_to_local && g_arg_num != 3)) && echo_exit 1 "can copy only ONE source from remote to local!"
 
-    g_dst="${g_arg_list[$[g_arg_num - 1]]}"
-
-    ((--g_arg_num)) # drops the last arg
-    ((g_to_local && g_arg_num != 2)) && echo_exit 1 "can copy only ONE source from remote to local!"
-
-    for ((i = 1; i < g_arg_num; ++i)); do
+    for ((i = 1; i < g_arg_num - 1; i++)); do
         [[ $g_src ]] && g_src+=" ${g_arg_list[i]}" || g_src="${g_arg_list[i]}"
     done
+
+    g_dst="${g_arg_list[$[g_arg_num - 1]]}"
 
     debug_remote_copy
     exec_in_parallel
@@ -705,9 +719,6 @@ run() {
         rs | rsync)
             sshaid_rsync;;
         *)
-            echo "action: {{$g_action}} is unknown!"
-            echo "********************************************************************************"
-            echo
             help_global;;
     esac
 }
