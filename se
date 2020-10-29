@@ -22,7 +22,7 @@ init() {
     PARALLEL_BIN="parallel --will-cite"
     SSHPASS_BIN=sshpass
     SSH_OPTS='-o stricthostkeychecking=no -o userknownhostsfile=/dev/null -q'
-    REMOTE_EXE_FILE='/tmp/.sshaid_exe_file'
+    REMOTE_EXE_FILE='/tmp/.se_exe_file'
 
     export COLUMN_LEN=$(stty size 2>/dev/null | awk '{print $2}')
     [[ $COLUMN_LEN ]] || COLUMN_LEN=80
@@ -85,9 +85,9 @@ echo_exit() {
 
 help_global() {
     cat <<\EOF
-usage: sshaid <action> [options] [command] [args]
+gsage: se <action> [options] [command] [args]
 
-use 'sshaid help <action>' to print help for a specific action
+use 'se help <action>' to print help for a specific action
 
 actions:
     help (h)
@@ -112,7 +112,7 @@ common-options:
         optional, keeps sequence of output same as the order of input,
         normally the output of a job will be printed as soon as the job completes.
     -q, --quiet
-        optional, suppresses extra information for sshaid, such as sshaid prompt and debug info.
+        optional, suppresses extra information for se, such as se prompt and debug info.
     -j, --jobs N
         optional, runs up to N jobs in parallel, 0 means as many as possible,
         defaults to one job per CPU.
@@ -136,12 +136,12 @@ attentions:
             in this case, default user will be used, and default user can be overridden by -u.
     6. user defined single-line-field-separator must be specified if password contains ';'.
        for example: '1.2.3.4_@_root_@_my:/passwd_@_22 // this is comment'
-       # sshaid ... --field-sep '_@_' ...
+       # se ... --field-sep '_@_' ...
     7. user defined single-line-comment-separator must be specified if PASSWORD contains '//'.
        for example: '1.2.3.4:root:my//passwd:22 !@# this is comment'
-       # sshaid ... --comment-sep '!@#' ...
+       # se ... --comment-sep '!@#' ...
 
-sshaid is an automation tool based on ssh, sshpass, and gnu parallel, it can be used to:
+se is an automation tool based on ssh, sshpass, and gnu parallel, it can be used to:
     1. scp|rsync file|dir(s) from local to remote, or in reverse.
     2. ssh into host(s)(and execute command(s)).
 
@@ -154,7 +154,7 @@ EOF
 
 help_help() {
     cat <<\EOF
-usage: sshaid help [action]
+usage: se help [action]
 EOF
 
     exit
@@ -162,9 +162,9 @@ EOF
 
 help_ssh() {
     cat <<\EOF
-usage: sshaid ssh [--ssh-bin your-ssh-binary-path] [common-options] [-e|--exec exe_file | command]
+usage: se ssh [--ssh-bin your-ssh-binary-path] [common-options] [-e|--exec exe_file | command]
 
-use 'sshaid help' to print help about 'common options'
+use 'se help' to print help about 'common options'
 
 notice that '-e|--exec exe_file' and 'command' can not be used together.
 if neither '-e|--exec exe_file' nor 'command' is used, then
@@ -178,10 +178,10 @@ exit
 
 help_scp() {
     cat <<\EOF
-usage: sshaid scp [--scp-bin your-scp-binary-path] [-L|--to-local] [common-options]
+usage: se scp [--scp-bin your-scp-binary-path] [-L|--to-local] [common-options]
               source(s) destination
 
-use 'sshaid help' to print help about 'common options
+use 'se help' to print help about 'common options
 
 without option '-L|--to-local':
     scp local source(s) to remote destination
@@ -194,10 +194,10 @@ exit
 
 help_rsync() {
     cat <<\EOF
-usage: sshaid rsync [--rsync-bin your-rsync-binary-path] [-L|--to-local] [common-options]
+usage: se rsync [--rsync-bin your-rsync-binary-path] [-L|--to-local] [common-options]
               source(s) destination
 
-use 'sshaid help' to print help about 'common options'
+use 'se help' to print help about 'common options'
 
 without option '-L|--to-local':
     rsync local source(s) to remote destination
@@ -589,7 +589,7 @@ exec_in_parallel() {
         exec_request :::: <(build_requests)
 }
 
-sshaid_ssh() {
+se_ssh() {
     g_ssh_cmd="${g_arg_list[1]}" # maybe empty
     check_option '-e' && g_ssh_exe_file="$optval"
 
@@ -623,11 +623,11 @@ sshaid_ssh() {
 
         exec_in_parallel
     else
-        sshaid_login
+        se_login
     fi
 }
 
-sshaid_login() {
+se_login() {
     for ((i = 0; i < g_host_num; i++)); do
         build_request 'login' $i
 
@@ -672,7 +672,7 @@ echo_host_prompt() {
     echo "$prompt"
 } && export -f echo_host_prompt
 
-sshaid_remote_copy() {
+se_remote_copy() {
     ((g_arg_num < 3)) && echo_exit 2 "source and destination are both needed!"
 
     check_option '-L' && g_to_local=1
@@ -698,14 +698,14 @@ debug_remote_copy() {
     echo
 }
 
-sshaid_scp() {
+se_scp() {
     g_copy_bin="$g_scp_bin"
-    sshaid_remote_copy
+    se_remote_copy
 }
 
-sshaid_rsync() {
+se_rsync() {
     g_copy_bin="$g_rsync_bin"
-    sshaid_remote_copy
+    se_remote_copy
 }
 
 run() {
@@ -713,11 +713,11 @@ run() {
         h | help)
             help_dispatch;;
         ssh)
-            sshaid_ssh;;
+            se_ssh;;
         scp)
-            sshaid_scp;;
+            se_scp;;
         rs | rsync)
-            sshaid_rsync;;
+            se_rsync;;
         *)
             help_global;;
     esac

@@ -1,10 +1,10 @@
-sshaid
+se(Shell Expect)
 ======
 ```
-$ sshaid
-usage: sshaid <action> [options] [command] [args]
+$ se
+usage: se <action> [options] [command] [args]
 
-use 'sshaid {help | h} <action>' to print help for a specific action
+use 'se help <action>' to print help for a specific action
 
 actions:
     help (h)
@@ -29,7 +29,7 @@ common-options:
         optional, keeps sequence of output same as the order of input,
         normally the output of a job will be printed as soon as the job completes.
     -q, --quiet
-        optional, suppresses extra information for sshaid, such as sshaid prompt and debug info.
+        optional, suppresses extra information for se, such as se prompt and debug info.
     -j, --jobs N
         optional, runs up to N jobs in parallel, 0 means as many as possible,
         defaults to one job per CPU.
@@ -53,13 +53,13 @@ attentions:
             in this case, default user will be used, and default user can be overridden by -u.
     6. user defined single-line-field-separator must be specified if password contains ';'.
        for example: '1.2.3.4_@_root_@_my:/passwd_@_22 // this is comment'
-       # sshaid ... --field-sep '_@_' ...
+       # se ... --field-sep '_@_' ...
     7. user defined single-line-comment-separator must be specified if PASSWORD contains '//'.
        for example: '1.2.3.4:root:my//passwd:22 !@# this is comment'
-       # sshaid ... --comment-sep '!@#' ...
+       # se ... --comment-sep '!@#' ...
 
-sshaid is an automation tool based on ssh, sshpass, and gnu parallel, it can be used to:
-    1. scp/rsync file/dir(s) from local to remote, or in reverse.
+se is an automation tool based on ssh, sshpass, and gnu parallel, it can be used to:
+    1. scp|rsync file|dir(s) from local to remote, or in reverse.
     2. ssh into host(s)(and execute command(s)).
 
 report bug(s) to <https://github.com/ling-zhou/sshaid>.
