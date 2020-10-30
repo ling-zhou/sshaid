@@ -147,7 +147,6 @@ se is an automation tool based on ssh, sshpass, and GNU parallel, it can be used
     2. ssh into host(s) (and execute command|file).
 
 report bugs to <https://github.com/ling-zhou/sshaid>.
-
 EOF
 
     exit
