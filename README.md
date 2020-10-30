@@ -11,6 +11,7 @@ actions:
     ssh
     scp
     rsync (rs)
+    example (ex)
 
 common-options:
     -H, --Host hosts-file
@@ -58,10 +59,56 @@ attentions:
        for example: '1.2.3.4:root:my//passwd:22 !@# this is comment'
        # se ... --comment-sep '!@#' ...
 
-se is an automation tool based on ssh, sshpass, and gnu parallel, it can be used to:
-    1. scp|rsync file|dir(s) from local to remote, or in reverse.
-    2. ssh into host(s)(and execute command(s)).
+se is an automation tool based on ssh, sshpass, and GNU parallel, it can be used to:
+    1. scp|rsync local file|dir(s) to remote, or in reverse.
+    2. ssh into host(s) (and execute command|file).
 
-report bug(s) to <https://github.com/ling-zhou/sshaid>.
+report bugs to <https://github.com/ling-zhou/sshaid>.
+```
 
+```
+$ se example
+# log into host.
+$ se -h 'host;user;passwd;port' ssh
+
+# log into host without host prompt.
+$ se -h 'host;user;passwd;port' ssh -q
+
+# log into host and execute command.
+$ se -h 'host;user;passwd;port' ssh 'ps -ef | grep python'
+
+# log into host and execute command with debug info printed.
+$ se -h 'host;user;passwd;port' ssh 'ps -ef | grep python' -d
+
+# log into host and execute a local file that will be automatically copied to host in advance.
+$ se -h 'host;user;passwd;port' ssh -e executable_file
+
+# log into hosts one by one, use '<C-d>' to exit current machine and enter next one,
+# use '<C-d><C-c>' to exit the entire process.
+$ se -H hosts.txt ssh
+
+# log into hosts and execute command in parallel
+$ se -H hosts.txt ssh 'ps -ef | grep python'
+
+# log into hosts and execute a local file in parallel,
+# the file will be automatically copied to host in advance.
+$ se -H hosts.txt ssh -e executable_file -j 5
+
+# scp local file(s) and dir(s) to remote_dir on hosts in parallel.
+$ se -H hosts.txt scp local_file1 local_dir2 local_file3 remote_dir -j 8
+
+# scp remote file(s) and dir(s) on hosts to local_dir in parallel.
+$ se -H hosts.txt scp -L remote_file1 remote_dir2 remote_file3 local_dir
+
+# rsync local file(s) and dir(s) to remote_dir on hosts in parallel.
+$ se -H hosts.txt rsync local_file1 local_dir2 local_file3 remote_dir -j 8
+
+# rsync remote file(s) and dir(s) on hosts to local_dir in parallel.
+$ se -H hosts.txt rsync -L remote_file1 remote_dir2 remote_file3 local_dir
+
+# when separators do not meet the requirements, you can specify your own.
+$ cat hosts.txt
+www.abc.com@@user1@@pass1@@22 ^_^ this is host1
+1.2.3.4@@user2@@pass2@@222 ^_^ this is host2
+$ se -H hosts.txt ssh 'ls -l' --field-sep '@@' --comment-sep '^_^'
 ```
