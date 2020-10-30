@@ -83,9 +83,9 @@ echo_exit() {
     exit $1
 } && export -f echo_exit
 
-help_global() {
+print_global_help() {
     cat <<\EOF
-gsage: se <action> [options] [command] [args]
+usage: se <action> [options] [command] [args]
 
 use 'se help <action>' to print help for a specific action
 
@@ -94,6 +94,7 @@ actions:
     ssh
     scp
     rsync (rs)
+    example (ex)
 
 common-options:
     -H, --Host hosts-file
@@ -141,18 +142,18 @@ attentions:
        for example: '1.2.3.4:root:my//passwd:22 !@# this is comment'
        # se ... --comment-sep '!@#' ...
 
-se is an automation tool based on ssh, sshpass, and gnu parallel, it can be used to:
-    1. scp|rsync file|dir(s) from local to remote, or in reverse.
-    2. ssh into host(s)(and execute command(s)).
+se is an automation tool based on ssh, sshpass, and GNU parallel, it can be used to:
+    1. scp|rsync local file|dir(s) to remote, or in reverse.
+    2. ssh into host(s) (and execute command|file).
 
-report bug(s) to <https://github.com/ling-zhou/sshaid>.
+report bugs to <https://github.com/ling-zhou/sshaid>.
 
 EOF
 
     exit
 }
 
-help_help() {
+print_help_help() {
     cat <<\EOF
 usage: se help [action]
 EOF
@@ -160,7 +161,7 @@ EOF
     exit
 }
 
-help_ssh() {
+print_ssh_help() {
     cat <<\EOF
 usage: se ssh [--ssh-bin your-ssh-binary-path] [common-options] [-e|--exec exe_file | command]
 
@@ -168,15 +169,15 @@ use 'se help' to print help about 'common options'
 
 notice that '-e|--exec exe_file' and 'command' can not be used together.
 if neither '-e|--exec exe_file' nor 'command' is used, then
-    just logins into host(s) specified by '-h|-H'.
+    log into host(s) specified by '-H|-h'.
 else
-    logins into host(s) specified by '-h|-H', executes command(s) and exits.
+    log into host(s) specified by '-H|-h', execute command and exit.
 EOF
 
 exit
 }
 
-help_scp() {
+print_scp_help() {
     cat <<\EOF
 usage: se scp [--scp-bin your-scp-binary-path] [-L|--to-local] [common-options]
               source(s) destination
@@ -192,7 +193,7 @@ EOF
 exit
 }
 
-help_rsync() {
+print_rsync_help() {
     cat <<\EOF
 usage: se rsync [--rsync-bin your-rsync-binary-path] [-L|--to-local] [common-options]
               source(s) destination
@@ -208,21 +209,54 @@ EOF
     exit
 }
 
-help_dispatch() {
-    local action=${g_arg_list[1]}
+print_examples() {
+    cat <<\EOF
+# log into host.
+$ se -h 'host;user;passwd;port' ssh
 
-    case $action in
-        h | help)
-            help_help;;
-        ssh)
-            help_ssh;;
-        scp)
-            help_scp;;
-        rs | rsync)
-            help_rsync;;
-        *)
-            help_global;;
-    esac
+# log into host without host prompt.
+$ se -h 'host;user;passwd;port' ssh -q
+
+# log into host and execute command.
+$ se -h 'host;user;passwd;port' ssh 'ps -ef | grep python'
+
+# log into host and execute command with debug info printed.
+$ se -h 'host;user;passwd;port' ssh 'ps -ef | grep python' -d
+
+# log into host and execute a local file that will be automatically copied to host in advance.
+$ se -h 'host;user;passwd;port' ssh -e executable_file
+
+# log into hosts one by one, use '<C-d>' to exit current machine and enter next one,
+# use '<C-d><C-c>' to exit the entire process.
+$ se -H hosts.txt ssh
+
+# log into hosts and execute command in parallel
+$ se -H hosts.txt ssh 'ps -ef | grep python'
+
+# log into hosts and execute a local file in parallel,
+# the file will be automatically copied to host in advance.
+$ se -H hosts.txt ssh -e executable_file -j 5
+
+# scp local file(s) and dir(s) to remote_dir on hosts in parallel.
+$ se -H hosts.txt scp local_file1 local_dir2 local_file3 remote_dir -j 8
+
+# scp remote file(s) and dir(s) on hosts to local_dir in parallel.
+$ se -H hosts.txt scp -L remote_file1 remote_dir2 remote_file3 local_dir
+
+# rsync local file(s) and dir(s) to remote_dir on hosts in parallel.
+$ se -H hosts.txt rsync local_file1 local_dir2 local_file3 remote_dir -j 8
+
+# rsync remote file(s) and dir(s) on hosts to local_dir in parallel.
+$ se -H hosts.txt rsync -L remote_file1 remote_dir2 remote_file3 local_dir
+
+# when separators do not meet the requirements, you can specify your own.
+$ cat hosts.txt
+www.abc.com@@user1@@pass1@@22 ^_^ this is host1
+1.2.3.4@@user2@@pass2@@222 ^_^ this is host2
+$ se -H hosts.txt ssh 'ls -l' --field-sep '@@' --comment-sep '^_^'
+EOF
+
+    exit
 }
 
 build_line_patterns() {
@@ -314,9 +348,7 @@ check_option() {
 }
 
 parse_args() {
-    if (($# < 2)); then
-        help_global
-    fi
+    (($# < 1)) && print_global_help
 
     local long_opts='debug,keep-order,quiet,to-local,Host:,host:,user:,password:'
     long_opts+=',port:,jobs:,timeout:,exec:,field-sep:,comment-sep:'
@@ -331,63 +363,64 @@ parse_args() {
 
         case "$optarg" in
             -d | --debug)
-                g_optval_dict['-d']=1;;
-
+                g_optval_dict['-d']=1
+                ;;
             -k | --keep-order)
-                g_optval_dict['-k']=1;;
-
+                g_optval_dict['-k']=1
+                ;;
             -q | --quiet)
-                g_optval_dict['-q']=1;;
-
+                g_optval_dict['-q']=1
+                ;;
             -L | --to-local)
-                g_optval_dict['-L']=1;;
-
+                g_optval_dict['-L']=1
+                ;;
             -H | --Host)
                 shift
-                g_optval_dict['-H']="$1";;
-
+                g_optval_dict['-H']="$1"
+                ;;
             -h | --host)
                 shift
-                g_optval_dict['-h']="$1";;
-
+                g_optval_dict['-h']="$1"
+                ;;
             -u | --user)
                 shift
-                g_optval_dict['-u']="$1";;
-
+                g_optval_dict['-u']="$1"
+                ;;
             -p | --password)
                 shift
-                g_optval_dict['-p']="$1";;
-
+                g_optval_dict['-p']="$1"
+                ;;
             -P | --port)
                 shift
-                g_optval_dict['-P']="$1";;
-
+                g_optval_dict['-P']="$1"
+                ;;
             -j | --jobs)
                 shift
-                g_optval_dict['-j']="$1";;
-
+                g_optval_dict['-j']="$1"
+                ;;
             -t | --timeout)
                 shift
-                g_optval_dict['-t']="$1";;
-
+                g_optval_dict['-t']="$1"
+                ;;
             -e | --exec)
                 shift
-                g_optval_dict['-e']="$1";;
-
+                g_optval_dict['-e']="$1"
+                ;;
             --field-sep | --comment-sep | --request-sep | \
             --proxy | --ssh-bin | --scp-bin | --rsync-bin)
                 shift
-                g_optval_dict[$optarg]="$1";;
-
+                g_optval_dict[$optarg]="$1"
+                ;;
             --)
                 ;;
 
             -*)
-                echo_exit 22 "unknown option: {{$optarg}}";;
-
+                echo_exit 22 "unknown option: {{$optarg}}"
+                ;;
             *)
                 g_arg_list[$g_arg_num]="$optarg"
-                ((++g_arg_num));;
+                ((++g_arg_num))
+                ;;
         esac
 
         shift
@@ -436,15 +469,16 @@ set_and_check_action() {
     g_action=${g_arg_list[0]}
     found=0
 
-    for action in h help ssh scp rs rsync; do
+    for action in h help ssh scp rs rsync ex example; do
         if [[ "$action" == $g_action ]]; then
             found=1
             break
         fi
     done
 
-    ((found == 0)) && echo_exit 22 "action($g_action) is invalid"
-    [[ $g_action == h || $g_action == help ]] && help_dispatch
+    ((found == 0)) && echo_exit 22 "action: {{$g_action}} is invalid"
+    [[ $g_action == h || $g_action == help ]] && dispatch_help
+    [[ $g_action == ex || $g_action == example ]] && print_examples
 }
 
 debug_args() {
@@ -659,7 +693,7 @@ echo_host_prompt() {
     local right_size=$[COLUMN_LEN - str_len - left_size]
 
     local prompt=''
-    local i # 避免污染同名变量!
+    local i # avoids conflict with 'i' in the previous layer
 
     for ((i = 0; i < left_size; i++)); do
         prompt+='*'
@@ -673,7 +707,7 @@ echo_host_prompt() {
 } && export -f echo_host_prompt
 
 se_remote_copy() {
-    ((g_arg_num < 3)) && echo_exit 2 "source and destination are both needed!"
+    ((g_arg_num < 3)) && echo_exit 2 "source(s) and destination are both needed!"
 
     check_option '-L' && g_to_local=1
     ((g_to_local && g_arg_num != 3)) && echo_exit 1 "can copy only ONE source from remote to local!"
@@ -708,18 +742,42 @@ se_rsync() {
     se_remote_copy
 }
 
+dispatch_help() {
+    local action=${g_arg_list[1]}
+
+    case $action in
+        ssh)
+            print_ssh_help
+            ;;
+        scp)
+            print_scp_help
+            ;;
+        rs | rsync)
+            print_rsync_help
+            ;;
+        h | help)
+            print_help_help
+            ;;
+        *)
+            print_global_help
+            ;;
+    esac
+}
+
 run() {
     case $g_action in
-        h | help)
-            help_dispatch;;
         ssh)
-            se_ssh;;
+            se_ssh
+            ;;
         scp)
-            se_scp;;
+            se_scp
+            ;;
         rs | rsync)
-            se_rsync;;
+            se_rsync
+            ;;
         *)
-            help_global;;
+            print_global_help
+            ;;
     esac
 }
 
