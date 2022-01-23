@@ -31,6 +31,8 @@ common-options:
         normally the output of a job will be printed as soon as the job completes.
     -q, --quiet
         optional, suppresses extra information for se, such as se prompt and debug info.
+    -s, --select
+        optional, select one host which will take effect, the others will be ignored.
     -j, --jobs N
         optional, runs up to N jobs in parallel, 0 means as many as possible,
         defaults to one job per CPU.
@@ -74,24 +76,31 @@ $ se -h 'host;user;passwd;port' ssh
 # log into host without host prompt.
 $ se -h 'host;user;passwd;port' ssh -q
 
-# log into host and execute command.
+# log into host and execute a command.
 $ se -h 'host;user;passwd;port' ssh 'ps -ef | grep python'
 
-# log into host and execute command with debug info printed.
+# log into host and execute a command with debug info printed.
 $ se -h 'host;user;passwd;port' ssh 'ps -ef | grep python' -d
 
-# log into host and execute a local file that will be automatically copied to host in advance.
+# log into host and execute a local file,
+# the file will be automatically copied to host in advance.
 $ se -h 'host;user;passwd;port' ssh -e executable_file
 
 # log into hosts one by one, use '<C-d>' to exit current machine and enter next one,
 # use '<C-d><C-c>' to exit the entire process.
 $ se -H hosts.txt ssh
 
-# log into hosts and execute command in parallel
+# log into the selected host.
+$ se -H hosts.txt ssh -s
+
+# log into hosts and execute a command in parallel.
 $ se -H hosts.txt ssh 'ps -ef | grep python'
 
+# log into the selected host and execute a command.
+$ se -H hosts.txt ssh 'ps -ef | grep python' -s
+
 # log into hosts and execute a local file in parallel,
-# the file will be automatically copied to host in advance.
+# the file will be automatically copied to hosts in advance.
 $ se -H hosts.txt ssh -e executable_file -j 5
 
 # scp local file(s) and dir(s) to remote_dir on hosts in parallel.

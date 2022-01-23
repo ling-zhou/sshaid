@@ -1,8 +1,8 @@
 #!/bin/bash
 # vim:et:ft=sh:
-# @author Zhou Ling(周龄) <zhou.0@foxmail.com>
+# @author ZHOU Ling(周龄) <zhou.0@foxmail.com>
 # @brief an automation tool based on ssh, sshpass, and GNU parallel.
-# @copyright Zhou Ling(周龄) <zhou.0@foxmail.com>
+# @copyright ZHOU Ling(周龄) <zhou.0@foxmail.com>
 
 shopt -s extglob # for trim
 
@@ -16,27 +16,27 @@ declare -a g_cmnt_list
 
 init() {
     export PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
-    TOOLS_PATH=$(dirname $(readlink -f "$0"))
-    PATH=$TOOLS_PATH:$PATH
+    local tools_path=$(dirname $(readlink -f "$0"))
+    PATH=$tools_path:$PATH
 
-    PARALLEL_BIN="parallel --will-cite"
-    SSHPASS_BIN=sshpass
+    PARALLEL_BIN='parallel --will-cite'
+    SSHPASS_BIN='sshpass'
     SSH_OPTS='-o stricthostkeychecking=no -o userknownhostsfile=/dev/null -q'
     REMOTE_EXE_FILE='/tmp/.se_exe_file'
 
-    export COLUMN_LEN=$(stty size 2>/dev/null | awk '{print $2}')
-    [[ $COLUMN_LEN ]] || COLUMN_LEN=80
+    export COLUMN_SIZE=$(stty size 2>/dev/null | awk '{print $2}')
+    [[ $COLUMN_SIZE ]] || COLUMN_SIZE=100
 
     export g_implict_copy=0
-    g_action=
-    g_debug=0
-    g_quiet=0
+    export g_debug=0
+    export g_quiet=0
+    g_action=''
     g_to_local=0
     g_keep_order=''
 
-    g_jobs=$(nproc 2>/dev/null)
+    g_jobs=$(getconf _NPROCESSORS_CONF 2>/dev/null)
     [[ $g_jobs ]] || g_jobs=8
-    g_timeout=60
+    g_timeout=60 # seconds
 
     g_default_user='root'
     g_default_pass='x'
@@ -49,11 +49,13 @@ init() {
 
     g_empty_host_line_pattern=''
     g_host_line_pattern=''
-    g_request_line_pattern=''
+    export g_request_line_pattern=''
 
     g_arg_num=0
     g_host_num=0
+    g_selected_host_index=-1
 
+    g_request=''
     g_ssh_cmd='' # command for ssh
     g_ssh_exe_file=''
 
@@ -114,6 +116,8 @@ common-options:
         normally the output of a job will be printed as soon as the job completes.
     -q, --quiet
         optional, suppresses extra information for se, such as se prompt and debug info.
+    -s, --select
+        optional, select one host which will take effect, the others will be ignored.
     -j, --jobs N
         optional, runs up to N jobs in parallel, 0 means as many as possible,
         defaults to one job per CPU.
@@ -216,24 +220,31 @@ $ se -h 'host;user;passwd;port' ssh
 # log into host without host prompt.
 $ se -h 'host;user;passwd;port' ssh -q
 
-# log into host and execute command.
+# log into host and execute a command.
 $ se -h 'host;user;passwd;port' ssh 'ps -ef | grep python'
 
-# log into host and execute command with debug info printed.
+# log into host and execute a command with debug info printed.
 $ se -h 'host;user;passwd;port' ssh 'ps -ef | grep python' -d
 
-# log into host and execute a local file that will be automatically copied to host in advance.
+# log into host and execute a local file,
+# the file will be automatically copied to host in advance.
 $ se -h 'host;user;passwd;port' ssh -e executable_file
 
 # log into hosts one by one, use '<C-d>' to exit current machine and enter next one,
 # use '<C-d><C-c>' to exit the entire process.
 $ se -H hosts.txt ssh
 
-# log into hosts and execute command in parallel
+# log into the selected host.
+$ se -H hosts.txt ssh -s
+
+# log into hosts and execute a command in parallel.
 $ se -H hosts.txt ssh 'ps -ef | grep python'
 
+# log into the selected host and execute a command.
+$ se -H hosts.txt ssh 'ps -ef | grep python' -s
+
 # log into hosts and execute a local file in parallel,
-# the file will be automatically copied to host in advance.
+# the file will be automatically copied to hosts in advance.
 $ se -H hosts.txt ssh -e executable_file -j 5
 
 # scp local file(s) and dir(s) to remote_dir on hosts in parallel.
@@ -270,7 +281,7 @@ build_line_patterns() {
     g_empty_host_line_pattern="^([[:space:]]*)($csep([[:space:]]*)(.*))?\$"
     g_host_line_pattern="^([]\[\.:_0-9a-zA-Z]+)$fsep([_0-9a-zA-Z]*)$fsep(.*)$fsep([0-9]*)"
     g_host_line_pattern+="(([[:space:]]*)$csep([[:space:]]*)(.*))?\$"
-    export g_request_line_pattern="^([^ ]+) ([^ ]+) ([^ ]+) (.+)$rsep(.+)\$"
+    g_request_line_pattern="^([^ ]+) ([^ ]+) ([^ ]+) (.+)$rsep(.+)\$"
 
     if ((g_debug)); then
         echo "field-sep: {{$fsep}}"
@@ -286,7 +297,7 @@ build_line_patterns() {
 
 parse_host_line() {
     if [[ "$1" =~ $g_empty_host_line_pattern ]]; then
-        ((g_debug)) && echo -e "empty-host-line: {{$1}} is ignored\n"
+        ((g_debug)) && echo "empty-host-line: {{$1}} is ignored"
         return
     fi
 
@@ -341,18 +352,13 @@ parse_host_file() {
     done <"$1"
 }
 
-check_option() {
-    optval="${g_optval_dict["$1"]}"
-    [[ "$optval" ]]
-}
-
 parse_args() {
     (($# < 1)) && print_global_help
 
     local long_opts='debug,keep-order,quiet,to-local,Host:,host:,user:,password:'
     long_opts+=',port:,jobs:,timeout:,exec:,field-sep:,comment-sep:'
     long_opts+=',request-sep:,proxy:,ssh-bin:,scp-bin:,rsync-bin:'
-    local short_opts='dkqLH:h:u:p:P:j:t:e:'
+    local short_opts='dkqsLH:h:u:p:P:j:t:e:'
     local options=$(getopt -l $long_opts -o $short_opts -- "$@" 2>/dev/null)
 
     eval set -- "$options"
@@ -369,6 +375,9 @@ parse_args() {
                 ;;
             -q | --quiet)
                 g_optval_dict['-q']=1
+                ;;
+            -s | --select)
+                g_optval_dict['-s']=1
                 ;;
             -L | --to-local)
                 g_optval_dict['-L']=1
@@ -427,9 +436,7 @@ parse_args() {
 
     set_and_check_action
 
-    check_option '-H' && check_option '-h' && \
-        echo_exit 1 "'-H' and '-h' can not be used together!"
-
+    check_option '-H' && check_option '-h' && echo_exit 1 "'-H' and '-h' can not be used together!"
     check_option '-d' && g_debug=1
     check_option '-k' && g_keep_order='-k'
     check_option '-q' && g_quiet=1 && g_debug=0
@@ -456,17 +463,20 @@ parse_args() {
         echo_exit 22 "'-H' or '-h' is needed!"
     fi
 
-    export g_debug
-    export g_quiet
-
     debug_args
+    check_option '-s' && select_host
+}
+
+check_option() {
+    optval="${g_optval_dict["$1"]}"
+    [[ "$optval" ]]
 }
 
 set_and_check_action() {
     ((g_arg_num == 0)) && echo_exit 2 "action is needed!"
 
     g_action=${g_arg_list[0]}
-    found=0
+    local found=0
 
     for action in h help ssh scp rs rsync ex example; do
         if [[ "$action" == $g_action ]]; then
@@ -475,13 +485,16 @@ set_and_check_action() {
         fi
     done
 
-    ((found == 0)) && echo_exit 22 "action: {{$g_action}} is invalid"
+    ((!found)) && echo_exit 22 "action: {{$g_action}} is invalid"
     [[ $g_action == h || $g_action == help ]] && dispatch_help
     [[ $g_action == ex || $g_action == example ]] && print_examples
 }
 
 debug_args() {
-    ((g_debug == 0)) && return
+    ((g_debug)) || return
+
+    local i
+    local k
 
     echo
     echo "action: {{$g_action}}"
@@ -525,6 +538,32 @@ debug_args() {
     done
 }
 
+select_host() {
+    local host_index
+    local i
+
+    for ((i = 0; i < g_host_num; i++)); do
+        printf "#%d: %s@%s  // %s\n" $i ${g_user_list[$i]} ${g_host_list[$i]} "${g_cmnt_list[$i]}"
+    done
+
+    printf "\nenter host index: "
+    read host_index
+    echo
+
+    if [[ ! $host_index =~ [0-9]+ ]]; then
+        echo_exit 22 "!!!!! error: host index is invalid !!!!!"
+    elif ((host_index < 0 || host_index >= g_host_num)); then
+        echo_exit 22 "!!!!! error: host index should be in range[0, $g_host_num) !!!!!"
+    else
+        g_selected_host_index=$host_index
+    fi
+}
+
+filter_host() {
+    local host_index=$1
+    ((g_selected_host_index >= 0 && g_selected_host_index != host_index))
+}
+
 build_request() {
     local action=$1
     local host_index=$2
@@ -548,42 +587,45 @@ build_request() {
             fi
 
             if [[ $g_copy_bin == *scp* ]]; then
-                request=$(cat <<EOF
+                g_request=$(cat <<EOF
 $SSHPASS_BIN -e $g_scp_bin -pr $SSH_OPTS $proxy_opts -P$port $user@$host:$g_src $dst
 EOF
 )
             else # rsync
-                request=$(cat <<EOF
+                g_request=$(cat <<EOF
 $g_rsync_bin -ae "$SSHPASS_BIN -e $g_ssh_bin $SSH_OPTS $proxy_opts -p$port" $user@$host:$g_src $dst
 EOF
 )
             fi
         else # from local to remote
             if [[ $g_copy_bin == *scp* ]]; then
-                request=$(cat <<EOF
+                g_request=$(cat <<EOF
 $SSHPASS_BIN -e $g_scp_bin -pr $SSH_OPTS $proxy_opts -P$port $g_src $user@$host:$dst
 EOF
 )
             else # rsync
-                request=$(cat <<EOF
+                g_request=$(cat <<EOF
 $g_rsync_bin -ae "$SSHPASS_BIN -e $g_ssh_bin $SSH_OPTS $proxy_opts -p$port" $g_src $user@$host:$dst
 EOF
 )
             fi
         fi
     else
-        request=$(cat <<EOF
+        g_request=$(cat <<EOF
 $SSHPASS_BIN -e $g_ssh_bin $SSH_OPTS $proxy_opts -p$port -l$user $host '$g_ssh_cmd'
 EOF
 )
     fi
 
     [[ $action != 'login' ]] && \
-        echo "$host_index $host $user $request$g_request_sep${g_pass_list[$host_index]}"
+        echo "$host_index $host $user $g_request$g_request_sep${g_pass_list[$host_index]}"
 }
 
 build_requests() {
+    local i
+
     for ((i = 0; i < g_host_num; i++)); do
+        filter_host $i && continue
         build_request 'exec' $i
     done
 }
@@ -596,11 +638,10 @@ exec_request() {
         local request="${BASH_REMATCH[4]}"
         SSHPASS="${BASH_REMATCH[5]}"
     else
-        echo_exit 22 "args: {{$1}} are invalid"
+        echo_exit 22 "arg: {{$1}} is invalid"
     fi
 
-    ((g_debug != 0 || g_quiet == 0 && g_implict_copy == 0)) && \
-        echo_host_prompt $host_index $host $user
+    ((g_debug || !g_quiet && !g_implict_copy)) && echo_host_prompt $host_index $host $user
 
     if ((g_debug)); then
         echo "request-line-pattern: {{$g_request_line_pattern}}"
@@ -634,23 +675,22 @@ se_ssh() {
 
     if (($g_arg_num > 1)) && check_option '-e'; then
         echo_exit 1 "'-e' and 'command' can not be used together!"
-
     elif (($g_arg_num > 1)); then
         exec_in_parallel
-
     elif check_option '-e'; then
-        export g_implict_copy=1
+        g_implict_copy=1
         g_to_local=0
         g_src="$g_ssh_exe_file"
         g_dst="${REMOTE_EXE_FILE}.$(timestamp)_$$_$RANDOM"
 
+        [[ -f $g_ssh_exe_file ]] || echo_exit 2 "!!!!! error: '$g_ssh_exe_file' is not found !!!!!"
         [[ "$g_scp_bin" != 'scp' ]] && g_copy_bin="$g_scp_bin"
         [[ -z "$g_copy_bin" && "$g_rsync_bin" != 'rsync' ]] && g_copy_bin="$g_rsync_bin"
         [[ "$g_copy_bin" ]] || g_copy_bin='scp'
 
         exec_in_parallel
 
-        export g_implict_copy=0
+        g_implict_copy=0
         g_copy_bin=
         g_ssh_cmd="chmod +x $g_dst && $g_dst; rm -f $g_dst"
 
@@ -661,22 +701,24 @@ se_ssh() {
 }
 
 se_login() {
-    for ((i = 0; i < g_host_num; i++)); do
-        build_request 'login' $i
+    local i
 
-        ((g_quiet == 0)) && echo_host_prompt $i ${g_host_list[i]} ${g_user_list[i]}
+    for ((i = 0; i < g_host_num; i++)); do
+        filter_host $i && continue
+        build_request 'login' $i
+        ((!g_quiet)) && echo_host_prompt $i ${g_host_list[i]} ${g_user_list[i]}
 
         if ((g_debug)); then
             echo "host-index: {{$i}}"
             echo "host: {{${g_host_list[i]}}}"
             echo "user: {{${g_user_list[i]}}}"
             echo "password: {{${g_pass_list[i]}}}"
-            echo "request: {{$request}}"
+            echo "request: {{$g_request}}"
             echo
         fi
 
         export SSHPASS="${g_pass_list[i]}"
-        eval "$request"
+        eval "$g_request"
         echo
     done
 }
@@ -686,13 +728,13 @@ echo_host_prompt() {
     local host=$2
     local user=$3
 
-    local str=$(printf "#%d: %s@%s\n" $[host_index + 1] $user $host)
+    local str=$(printf "#%d: %s@%s\n" $host_index $user $host)
     local str_len=$[${#str} + 2]
-    local left_size=$[(COLUMN_LEN - str_len) / 2]
-    local right_size=$[COLUMN_LEN - str_len - left_size]
+    local left_size=$[(COLUMN_SIZE - str_len) / 2]
+    local right_size=$[COLUMN_SIZE - str_len - left_size]
 
+    local i
     local prompt=''
-    local i # avoids conflict with 'i' in the previous layer
 
     for ((i = 0; i < left_size; i++)); do
         prompt+='*'
@@ -711,6 +753,7 @@ se_remote_copy() {
     check_option '-L' && g_to_local=1
     ((g_to_local && g_arg_num != 3)) && echo_exit 1 "can copy only ONE source from remote to local!"
 
+    local i
     for ((i = 1; i < g_arg_num - 1; i++)); do
         [[ $g_src ]] && g_src+=" ${g_arg_list[i]}" || g_src="${g_arg_list[i]}"
     done
@@ -722,7 +765,7 @@ se_remote_copy() {
 }
 
 debug_remote_copy() {
-    ((g_debug == 0)) && return
+    ((g_debug)) || return
 
     echo "to-local: {{$g_to_local}}"
     echo "copy-bin: {{$g_copy_bin}}"
