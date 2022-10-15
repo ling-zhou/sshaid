@@ -170,14 +170,15 @@ usage: se ssh [--ssh-bin your-ssh-binary-path] [common-options] [-e|--exec exe_f
 
 use 'se help' to print help about 'common options'
 
-notice that '-e|--exec exe_file' and 'command' can not be used together.
+notice that '-e|--exec exe_file' and 'command' can not be used together
+
 if neither '-e|--exec exe_file' nor 'command' is used, then
-    log into host(s) specified by '-H|-h'.
+    log into host(s) specified by '-H|-h'
 else
-    log into host(s) specified by '-H|-h', execute command and exit.
+    log into host(s) specified by '-H|-h', execute command and exit
 EOF
 
-exit
+    exit
 }
 
 print_scp_help() {
@@ -185,7 +186,7 @@ print_scp_help() {
 usage: se scp [--scp-bin your-scp-binary-path] [-L|--to-local] [common-options]
               source(s) destination
 
-use 'se help' to print help about 'common options
+use 'se help' to print help about 'common options'
 
 without option '-L|--to-local':
     scp local source(s) to remote destination
@@ -193,7 +194,7 @@ with option '-L|--to-local':
     scp remote source(s) to local destination
 EOF
 
-exit
+    exit
 }
 
 print_rsync_help() {
