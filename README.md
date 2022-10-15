@@ -121,3 +121,7 @@ www.abc.com@@user1@@pass1@@22 ^_^ this is host1
 1.2.3.4@@user2@@pass2@@222 ^_^ this is host2
 $ se -H hosts.txt ssh 'ls -l' --field-sep '@@' --comment-sep '^_^'
 ```
+
+download sshpass binary
+======
+https://github.com/ling-zhou/rust-sshpass/releases/
